@@ -502,27 +502,27 @@ export class Animator {
       'drag-end', () => {
         this._dragging = false;
         if (draggable) {
-          draggable.disconnectObject(this._iconsContainer);
+          draggable.disconnectObject(this);
         }
         this._draggableHooks = this._draggableHooks.filter(d => d !== draggable);
-        if (this.extension?.running) {
+        if (this.extension?.animator === this) {
           this._oneShotId = setTimeout(() => {
             this._oneShotId = null;
-            if (!this.extension?.running) return;
+            if (this.extension?.animator !== this) return;
             this.enable();
             this.extension._iconsDirty = true;
             this._startAnimation();
           }, ANIM_REENABLE_DELAY);
         }
       },
-      this._iconsContainer
+      this
     );
     this._draggableHooks.push(draggable);
   }
 
   _disconnectDraggableHook(draggable) {
-    if (draggable && this._iconsContainer) {
-      draggable.disconnectObject(this._iconsContainer);
+    if (draggable) {
+      draggable.disconnectObject(this);
     }
   }
 
