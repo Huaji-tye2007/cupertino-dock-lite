@@ -1,5 +1,5 @@
 {
-  "description": "Adds macOS-style bounce animations and optional Cupertino dock theming. Part of the WACK project.",
+  "description": "Adds macOS-style bounce animations and optional Cupertino dock theming for Dash to Dock. Part of the WACK project.",
   "name": "WACK - Cupertino Dock Lite",
   "shell-version": [
     "46",
