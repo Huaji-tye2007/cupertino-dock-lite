@@ -11,7 +11,7 @@ export class BadgeManager {
   // Called by animator.js once D2D is ready.
   setNotificationsMonitor(monitor) {
     if (this._monitorChangedId && this._notificationsMonitor) {
-      try { this._notificationsMonitor.disconnect(this._monitorChangedId); } catch (e) { }
+      this._notificationsMonitor.disconnect(this._monitorChangedId);
       this._monitorChangedId = null;
     }
     this._notificationsMonitor = monitor;
@@ -34,7 +34,7 @@ export class BadgeManager {
 
   destroy() {
     if (this._monitorChangedId && this._notificationsMonitor) {
-      try { this._notificationsMonitor.disconnect(this._monitorChangedId); } catch (e) { }
+      this._notificationsMonitor.disconnect(this._monitorChangedId);
     }
     this._monitorChangedId = null;
     this._notificationsMonitor = null;
@@ -86,29 +86,57 @@ export class BadgeManager {
 
   _positionLikeD2d(uiIcon, badge, iconSize) {
     const d2dBadge = this._getD2dBadgeActor(uiIcon._appwell);
+    const badgeBin = this._getD2dBadgeBin(uiIcon._appwell);
     if (d2dBadge && uiIcon._bin) {
       try {
-        const badgePos = d2dBadge.get_transformed_position();
-        const iconPos = uiIcon._bin.get_transformed_position();
-        const badgeSize = this._getTransformedSize(d2dBadge);
+        const badgeSize = this._getTransformedSize(d2dBadge) || [0, 0];
+        const lastBadgeSize = badge._lastBadgeSize || [0, 0];
 
-        badge.source = d2dBadge;
-        badge.x = Math.round(badgePos[0] - iconPos[0]);
-        badge.y = Math.round(badgePos[1] - iconPos[1]);
-        if (badgeSize) {
-          badge.set_size(Math.round(badgeSize[0]), Math.round(badgeSize[1]));
-          badge.set_scale(1, 1);
+        const needsUpdate = !badge._cachedOffsetReady ||
+                            badge._lastIconSize !== iconSize ||
+                            lastBadgeSize[0] !== badgeSize[0] ||
+                            lastBadgeSize[1] !== badgeSize[1];
+
+        if (needsUpdate) {
+          const oldTx = badgeBin ? badgeBin.translation_x : 0;
+          if (badgeBin) badgeBin.translation_x = 0;
+
+          const badgePos = d2dBadge.get_transformed_position();
+          const iconPos = uiIcon._bin.get_transformed_position();
+
+          if (badgeBin) badgeBin.translation_x = oldTx;
+
+          badge._cachedX = Math.round(badgePos[0] - iconPos[0]);
+          badge._cachedY = Math.round(badgePos[1] - iconPos[1]);
+          badge._cachedWidth = Math.round(badgeSize[0]);
+          badge._cachedHeight = Math.round(badgeSize[1]);
+          badge._cachedOffsetReady = true;
+          badge._lastIconSize = iconSize;
+          badge._lastBadgeSize = badgeSize;
+
+          badge.source = d2dBadge;
+          badge.x = badge._cachedX;
+          badge.y = badge._cachedY;
+          if (badgeSize[0] > 0 && badgeSize[1] > 0) {
+            badge.set_size(badge._cachedWidth, badge._cachedHeight);
+            badge.set_scale(1, 1);
+          }
         }
         return;
       } catch (e) { }
     }
 
     const fallback = Math.round(Math.max(16, iconSize * 0.42));
-    badge.source = null;
-    badge.set_size(fallback, fallback);
-    badge.set_scale(1, 1);
-    badge.x = Math.round(uiIcon.width - fallback * 0.72);
-    badge.y = Math.round(-fallback * 0.28);
+    if (!badge._cachedOffsetReady || badge._lastIconSize !== iconSize || badge.source !== null) {
+      badge.source = null;
+      badge.set_size(fallback, fallback);
+      badge.set_scale(1, 1);
+      badge.x = Math.round(uiIcon.width - fallback * 0.72);
+      badge.y = Math.round(-fallback * 0.28);
+      badge._cachedOffsetReady = true;
+      badge._lastIconSize = iconSize;
+      badge._lastBadgeSize = [fallback, fallback];
+    }
   }
 
   _getTransformedSize(actor) {
@@ -138,9 +166,13 @@ export class BadgeManager {
       if (!container) return null;
       if (container._notificationBadgeBin) return container._notificationBadgeBin;
 
-      return container.get_children?.().find(child =>
+      const badgeBin = container.get_children?.().find(child =>
         child.get_children?.()?.some?.(c => c.has_style_class_name?.('notification-badge'))
       ) ?? null;
+      if (badgeBin) {
+        container._notificationBadgeBin = badgeBin;
+      }
+      return badgeBin;
     } catch (e) {
       return null;
     }

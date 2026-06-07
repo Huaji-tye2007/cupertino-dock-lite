@@ -21,6 +21,7 @@ export class Animator {
     this._enabled = false;
     this.animationInterval = ANIM_INTERVAL;
     this._separator = null;
+    this._draggableHooks = [];
   }
 
   enable() {
@@ -31,7 +32,7 @@ export class Animator {
       can_focus: false
     });
 
-Main.uiGroup.add_child(this._iconsContainer);
+    Main.uiGroup.add_child(this._iconsContainer);
 
     this._enabled = true;
     this._dragging = false;
@@ -45,14 +46,19 @@ Main.uiGroup.add_child(this._iconsContainer);
     };
   }
 
-  disable() {
-    if (!this._enabled) return;
+  disable(preserveDragHooks = false) {
+    if (!this._enabled) {
+      if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
+      if (!preserveDragHooks) this._disconnectDraggableHooks();
+      return;
+    }
     this._enabled = false;
     this._endAnimation();
-    if (this._oneShotId) { clearInterval(this._oneShotId); this._oneShotId = null; }
+    if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
     this._resetAppwellHooks();
+    if (!preserveDragHooks) this._disconnectDraggableHooks();
     if (this._iconsContainer) {
-Main.uiGroup.remove_child(this._iconsContainer);
+      Main.uiGroup.remove_child(this._iconsContainer);
       this._iconsContainer.destroy();
       this._iconsContainer = null;
     }
@@ -156,15 +162,16 @@ Main.uiGroup.remove_child(this._iconsContainer);
   }
 
   _animate() {
-    if (!this._iconsContainer || !this.dashContainer) return;
+    if (!this._iconsContainer || !this.dashContainer) {
+      this._endAnimation();
+      return;
+    }
     this.dash = this.dashContainer.dash;
     if (this._relayout > 0 && this.extension && this.extension._updateLayout) {
       this.extension._updateLayout();
       this._relayout--;
     }
     this._iconsContainer.width = 1; this._iconsContainer.height = 1;
-
-    let jumping = this.isJumping();
 
     let animateIcons = this._iconsContainer.get_children().filter(c => c.name !== 'cupertinisator-badge');
     if (this._iconsCount != animateIcons.length) {
@@ -189,20 +196,39 @@ Main.uiGroup.remove_child(this._iconsContainer);
     icons.forEach((c) => {
       let bin = c._bin;
       if (!bin) return;
-      if (c._appwell && c._appwell.app && c._appwell.app.get_n_windows() > 0);
       let found = false;
       for (let i = 0; i < animateIcons.length; i++) {
         if (animateIcons[i]._bin == bin) { found = true; break; }
       }
       if (!found) {
-        let uiIcon = new St.Widget({ name: 'icon', width: iconSize, height: iconSize });
+        let uiIcon = new St.Widget({ name: 'icon', width: iconSize, height: iconSize, visible: false });
         uiIcon.pivot_point = pivot; uiIcon._bin = bin; uiIcon._appwell = c._appwell; uiIcon._label = c._label;
-        this._iconsContainer.add_child(uiIcon);
-        let draggable = c._draggable;
-        if (draggable && !draggable._dragBeginId) {
-          draggable._dragBeginId = draggable.connect('drag-begin', () => { this._dragging = true; this.disable(); });
-          draggable._dragEndId = draggable.connect('drag-end', () => { this._dragging = false; this._oneShotId = setTimeout(this.enable.bind(this), ANIM_REENABLE_DELAY); });
+        uiIcon._wasActive = false;
+
+        if (bin.first_child) {
+          let img = new St.Icon({ name: 'icon', icon_name: bin.first_child.icon_name || null, gicon: bin.first_child.gicon || null });
+          img._source = bin; img.set_icon_size(iconSize * ANIM_ICON_QUALITY); img.set_scale(1 / ANIM_ICON_QUALITY, 1 / ANIM_ICON_QUALITY);
+          uiIcon.add_child(img);
+          if (this._badgeManager) this._badgeManager.attachToIcon(uiIcon);
         }
+
+        if (uiIcon._appwell && !uiIcon._appwell._dashAnimatorHooked) {
+          uiIcon._appwell._dashAnimatorHooked = true;
+          uiIcon._appwell._dashAnimatorClickedId = uiIcon._appwell.connect('clicked', () => {
+            if (uiIcon._appwell.app && uiIcon._appwell.app.get_n_windows() === 0) { uiIcon._clickJump = 1.0; this._startAnimation(); if (this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0); }
+          });
+          uiIcon._appwell._dashAnimatorUrgentId = uiIcon._appwell.connect('notify::urgent', () => {
+            if (uiIcon._appwell.urgent) {
+              this.requestUrgentBounce(uiIcon._appwell, true);
+              if (this.extension?.urgent_bounce && this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0);
+            } else {
+              this.clearUrgentBounce(uiIcon._appwell);
+            }
+          });
+        }
+
+        this._iconsContainer.add_child(uiIcon);
+        this._connectDraggableHooks(c._draggable);
       }
     });
 
@@ -216,43 +242,27 @@ Main.uiGroup.remove_child(this._iconsContainer);
     });
 
     animateIcons = this._iconsContainer.get_children().filter(c => c.name !== 'cupertinisator-badge');
-    let cornerPos = this._get_position(this.dashContainer);
-    animateIcons.sort((a, b) => {
-      let dstA = this._get_distance_sqr(cornerPos, this._get_position(a._bin));
-      let dstB = this._get_distance_sqr(cornerPos, this._get_position(b._bin));
-      return dstA - dstB;
-    });
 
-    let dotIndex = 0;
+    // Update clone sizes and check state changes
     animateIcons.forEach((icon) => {
       let bin = icon._bin;
-      let pos = this._get_position(bin);
-      icon.set_size(iconSize, iconSize);
+      if (icon.width !== iconSize || icon.height !== iconSize) {
+        icon.set_size(iconSize, iconSize);
+      }
 
+      // Safety fallback check for dynamic children updates
       if (!icon.first_child && bin.first_child) {
         let img = new St.Icon({ name: 'icon', icon_name: bin.first_child.icon_name || null, gicon: bin.first_child.gicon || null });
         img._source = bin; img.set_icon_size(iconSize * ANIM_ICON_QUALITY); img.set_scale(1 / ANIM_ICON_QUALITY, 1 / ANIM_ICON_QUALITY);
         icon.add_child(img);
         if (this._badgeManager) this._badgeManager.attachToIcon(icon);
-        if (icon._appwell && !icon._appwell._dashAnimatorHooked) {
-          icon._appwell._dashAnimatorHooked = true;
-          icon._appwell._dashAnimatorClickedId = icon._appwell.connect('clicked', () => {
-            if (icon._appwell.app && icon._appwell.app.get_n_windows() === 0) { icon._clickJump = 1.0; this._startAnimation(); if (this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0); }
-          });
-          icon._appwell._dashAnimatorUrgentId = icon._appwell.connect('notify::urgent', () => {
-            if (icon._appwell.urgent) {
-              this.requestUrgentBounce(icon._appwell, true);
-              if (this.extension?.urgent_bounce && this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0);
-            } else {
-              this.clearUrgentBounce(icon._appwell);
-            }
-          });
-        }
       }
-      //Refreshes bounce clone sizes in case user resizes icons in D2D
+
       if (icon.first_child) {
-        icon.first_child.set_icon_size(iconSize * ANIM_ICON_QUALITY);
-        // Sync icon in case it changed (e.g. trash fill/empty state)
+        const targetIconSize = iconSize * ANIM_ICON_QUALITY;
+        if (icon.first_child.icon_size !== targetIconSize) {
+          icon.first_child.set_icon_size(targetIconSize);
+        }
         const src = icon._bin?.first_child;
         if (src) {
           if (src.gicon && icon.first_child.gicon !== src.gicon)
@@ -261,33 +271,20 @@ Main.uiGroup.remove_child(this._iconsContainer);
             icon.first_child.icon_name = src.icon_name;
         }
       }
-
     });
-
 
     let didAnimate = false;
     animateIcons.forEach((icon) => {
-let pos = this._get_position(icon._bin);
-
-      icon.visible = !isNaN(pos[0]) && pos[0] !== 0; // Guard (0,0) sticking
-      if (!icon.visible) return;
-
-      let jX = 0, jY = 0;
       if (icon._clickJump > 0) {
-        let jh = this.extension.jump_height || 0.85;
-        let off = Math.sin(icon._clickJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * jh;
-        if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
         icon._clickJump -= 0.0275 * (this.extension.jump_speed || 1.0);
         if (icon._clickJump <= 0) {
           const app = icon._appwell?.app;
           const appId = app?.get_id() ?? '';
-          // Chromium-based browsers report STARTING for a long time across
-          // multiple profile windows — cap them at one bounce cycle.
           const isChromium = appId.includes('chromium') || appId.includes('chrome') ||
                              appId.includes('brave') || appId.includes('microsoft-edge') ||
                              appId.includes('opera');
           if (!isChromium && app?.get_state() === Shell.AppState.STARTING) {
-            icon._clickJump = 1.0; // App still loading — continue bouncing
+            icon._clickJump = 1.0;
           } else {
             icon._clickJump = 0;
           }
@@ -302,16 +299,12 @@ let pos = this._get_position(icon._bin);
       }
 
       if (urgentBounceEnabled && icon._attentionJump > 0) {
-        let jh = this.extension.jump_height || 0.85;
-        let off = Math.sin(icon._attentionJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * jh;
-        if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
         icon._attentionJump -= 0.0275 * (this.extension.jump_speed || 1.0);
         if (icon._attentionJump <= 0) {
           icon._attentionJump = 0;
           if (icon._appwell?._dashAnimatorUrgentFirstRunRemaining > 0) {
             icon._appwell._dashAnimatorUrgentFirstRunRemaining--;
           }
-          // If still urgent — start the 1s quiet gap before next bounce cycle
           if (icon._appwell?.urgent && icon._appwell._dashAnimatorUrgentBounceActive !== false) {
             icon._attentionCooldown = Math.round(1000 / this.animationInterval);
           }
@@ -322,34 +315,57 @@ let pos = this._get_position(icon._bin);
           icon._attentionCooldown--;
           didAnimate = true;
         } else if (!this.extension?._pendingHideForUrgentBounce || icon._appwell._dashAnimatorUrgentFirstRunRemaining > 0) {
-          // Quiet gap expired — fire next bounce cycle
           icon._attentionJump = 1.0;
           didAnimate = true;
         }
       }
 
-      let isJumping = (icon._clickJump > 0 || icon._attentionJump > 0);
-      let isActive = isJumping;
-
-      const badgeCount = this._getD2dBadgeCount(icon._appwell);
+      const isJumping = (icon._clickJump > 0 || icon._attentionJump > 0);
       const forceClone = icon._forceClone === true;
-      const cloneActive = isActive || forceClone;
+      const cloneActive = isJumping || forceClone;
 
-      if (icon._bin.first_child) icon._bin.first_child.opacity = cloneActive ? 0 : 255;
-      this._setD2dBadgeOpacity(icon._appwell, cloneActive ? 0 : 255);
-      icon.visible = cloneActive;
+      if (!cloneActive) {
+        if (icon._wasActive) {
+          if (icon._bin.first_child) icon._bin.first_child.opacity = 255;
+          this._setD2dBadgeOpacity(icon._appwell, 255);
+          icon.visible = false;
+          icon._wasActive = false;
+        }
+        return;
+      }
+
+      icon._wasActive = true;
+      icon.visible = true;
+
+      let pos = this._get_position(icon._bin);
+      let jX = 0, jY = 0;
+      if (icon._clickJump > 0) {
+        let jh = this.extension.jump_height || 0.85;
+        let off = Math.sin(icon._clickJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * jh;
+        if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
+      } else if (urgentBounceEnabled && icon._attentionJump > 0) {
+        let jh = this.extension.jump_height || 0.85;
+        let off = Math.sin(icon._attentionJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * jh;
+        if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
+      }
+
+      if (icon._bin.first_child) icon._bin.first_child.opacity = 0;
+      this._setD2dBadgeOpacity(icon._appwell, 0);
 
       icon.set_position(Math.round(pos[0] + jX), Math.round(pos[1] + jY));
-      if (this._badgeManager) this._badgeManager.updateIcon(icon, iconSize, badgeCount, cloneActive);
+      if (this._badgeManager) {
+        const badgeCount = this._getD2dBadgeCount(icon._appwell);
+        this._badgeManager.updateIcon(icon, iconSize, badgeCount, true);
+      }
     });
-    if (didAnimate) this._startAnimation();
+    if (didAnimate)
+      this._startAnimation();
+    else
+      this._endAnimation();
   }
 
   _findIcons() { return this.extension._findIcons(); }
-  _get_x(obj) { return obj ? obj.get_transformed_position()[0] : 0; }
-  _get_y(obj) { return obj ? obj.get_transformed_position()[1] : 0; }
-  _get_position(obj) { return [this._get_x(obj), this._get_y(obj)]; }
-  _get_distance_sqr(p1, p2) { let a = p1[0] - p2[0], b = p1[1] - p2[1]; return a * a + b * b; }
+  _get_position(obj) { return obj ? obj.get_transformed_position() : [0, 0]; }
 
   _beginAnimation() {
     if (this._intervalId == null) {
@@ -360,7 +376,6 @@ let pos = this._get_position(icon._bin);
 
   _endAnimation() {
     if (this._intervalId) { clearInterval(this._intervalId); this._intervalId = null; }
-    if (this._timeoutId) { clearTimeout(this._timeoutId); this._timeoutId = null; }
     this._relayout = 0;
     this._restoreCloneHandoffs();
   }
@@ -407,16 +422,64 @@ let pos = this._get_position(icon._bin);
     if (!appwell) return;
 
     if (appwell._dashAnimatorClickedId) {
-      try { appwell.disconnect(appwell._dashAnimatorClickedId); } catch (e) { }
+      appwell.disconnect(appwell._dashAnimatorClickedId);
       appwell._dashAnimatorClickedId = null;
     }
 
     if (appwell._dashAnimatorUrgentId) {
-      try { appwell.disconnect(appwell._dashAnimatorUrgentId); } catch (e) { }
+      appwell.disconnect(appwell._dashAnimatorUrgentId);
       appwell._dashAnimatorUrgentId = null;
     }
 
     appwell._dashAnimatorHooked = false;
+  }
+
+  _connectDraggableHooks(draggable) {
+    if (!draggable || this._draggableHooks.some(hook => hook.draggable === draggable)) return;
+
+    const hook = { draggable, dragBeginId: 0, dragEndId: 0 };
+    hook.dragBeginId = draggable.connect('drag-begin', () => {
+      this._dragging = true;
+      this.disable(true);
+    });
+    hook.dragEndId = draggable.connect('drag-end', () => {
+      this._dragging = false;
+      this._disconnectDraggableHook(hook);
+      if (this.extension?.running) {
+        this._oneShotId = setTimeout(() => {
+          this._oneShotId = null;
+          if (!this.extension?.running) return;
+          this.enable();
+          this.extension._iconsDirty = true;
+          this._startAnimation();
+        }, ANIM_REENABLE_DELAY);
+      }
+    });
+    this._draggableHooks.push(hook);
+  }
+
+  _disconnectDraggableHook(hook) {
+    if (!hook?.draggable) return;
+
+    if (hook.dragBeginId) {
+      hook.draggable.disconnect(hook.dragBeginId);
+      hook.dragBeginId = 0;
+    }
+    if (hook.dragEndId) {
+      hook.draggable.disconnect(hook.dragEndId);
+      hook.dragEndId = 0;
+    }
+
+    this._draggableHooks = this._draggableHooks.filter(item => item !== hook);
+  }
+
+  _disconnectDraggableHooks() {
+    [...this._draggableHooks].forEach(hook => this._disconnectDraggableHook(hook));
+    this._draggableHooks = [];
+  }
+
+  _logLifecycleError(action, error) {
+    log(`[cupertinisator] ${action} failed: ${error.message}`);
   }
 
   _getD2dBadgeBin(appwell) {
@@ -425,9 +488,13 @@ let pos = this._get_position(icon._bin);
       if (!container) return null;
       if (container._notificationBadgeBin) return container._notificationBadgeBin;
 
-      return container.get_children?.().find(child =>
+      const badgeBin = container.get_children?.().find(child =>
         child.get_children?.()?.some?.(c => c.has_style_class_name?.('notification-badge'))
       ) ?? null;
+      if (badgeBin) {
+        container._notificationBadgeBin = badgeBin;
+      }
+      return badgeBin;
     } catch (e) {
       return null;
     }
@@ -436,7 +503,14 @@ let pos = this._get_position(icon._bin);
   _setD2dBadgeOpacity(appwell, opacity) {
     try {
       const badgeBin = this._getD2dBadgeBin(appwell);
-      if (badgeBin) badgeBin.opacity = opacity;
+      if (badgeBin) {
+        if (opacity === 0) {
+          badgeBin.translation_x = -9999;
+        } else {
+          badgeBin.translation_x = 0;
+          badgeBin.opacity = 255;
+        }
+      }
     } catch (e) { }
   }
 

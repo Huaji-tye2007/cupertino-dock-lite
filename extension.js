@@ -33,7 +33,7 @@ import { setInterval, clearInterval } from './utils.js';
 export default class DashAnimatorExtension extends Extension {
   enable() {
     this._isInitializing = true;
-    this._settings = this.getSettings('org.gnome.shell.extensions.cupertino-dock-lite');
+    this._settings = this.getSettings();
     this._applySettings();
     this._settingsChangedId = this._settings.connect('changed', () => this._applySettings());
 
@@ -163,6 +163,8 @@ export default class DashAnimatorExtension extends Extension {
       this._jumpHideTimer = null;
     }
 
+    this._disconnectIconEvents();
+
     if (this._windowEvents) {
       this._windowEvents.forEach(id => global.window_manager.disconnect(id));
       this._windowEvents = [];
@@ -174,25 +176,22 @@ export default class DashAnimatorExtension extends Extension {
     }
 
     if (this.dashContainer) {
-      this.dashContainer._animateIn = this.dashContainer.__animateIn;
-      this.dashContainer._animateOut = this.dashContainer.__animateOut;
+      if (this.dashContainer.__animateIn)
+        this.dashContainer._animateIn = this.dashContainer.__animateIn;
+      if (this.dashContainer.__animateOut)
+        this.dashContainer._animateOut = this.dashContainer.__animateOut;
       this.dashContainer.set_reactive(false);
       this.dashContainer.set_track_hover(false);
-      this.dashContainerEvents.forEach(id => {
-        if (this.dashContainer) this.dashContainer.disconnect(id);
-      });
-      this.dashContainerEvents = [];
-      this.dashContainer = null;
+      this._disconnectDashContainerEvents();
     }
 
     if (this.dash) {
       this._unpatchTrashUnpinDrop();
-      this.dashEvents.forEach(id => {
-        if (this.dash) this.dash.disconnect(id);
-      });
-      this.dashEvents = [];
+      this._disconnectDashEvents();
       this.dash = null;
     }
+
+    this.dashContainer = null;
 
     if (this._layoutManagerEvents) {
       this._layoutManagerEvents.forEach(id => Main.layoutManager.disconnect(id));
@@ -200,6 +199,48 @@ export default class DashAnimatorExtension extends Extension {
     this._layoutManagerEvents = [];
 
     this.animator = null;
+  }
+
+  _disconnectIconEvents() {
+    (this._iconEvents ?? []).forEach(evt => {
+      try {
+        if (evt.actor && evt.id) evt.actor.disconnect(evt.id);
+        if (evt.actor?._dashAnimatorUrgentHooked)
+          evt.actor._dashAnimatorUrgentHooked = false;
+        if (evt.actor?._checkEventId)
+          evt.actor._checkEventId = null;
+      } catch (e) {
+        this._logLifecycleError('disconnect icon hook', e);
+      }
+    });
+    this._iconEvents = [];
+  }
+
+  _disconnectDashEvents() {
+    (this.dashEvents ?? []).forEach(evt => {
+      try {
+        if (evt.actor && evt.id) evt.actor.disconnect(evt.id);
+      } catch (e) {
+        this._logLifecycleError('disconnect dash hook', e);
+      }
+    });
+    this.dashEvents = [];
+  }
+
+  _disconnectDashContainerEvents() {
+    (this.dashContainerEvents ?? []).forEach(id => {
+      try {
+        if (this.dashContainer && id) this.dashContainer.disconnect(id);
+      } catch (e) {
+        this._logLifecycleError('disconnect dash container hook', e);
+      }
+    });
+    this.dashContainerEvents = [];
+    this._dashContainerDestroyId = null;
+  }
+
+  _logLifecycleError(action, error) {
+    log(`[cupertinisator] ${action} failed: ${error.message}`);
   }
 
   disable() {
@@ -214,6 +255,12 @@ export default class DashAnimatorExtension extends Extension {
     if (this._extensionStateChangedId) {
       this._extensionManager.disconnect(this._extensionStateChangedId);
       this._extensionStateChangedId = null;
+    }
+    if (this.dashContainer && this._dashContainerDestroyId) {
+      this.dashContainer.disconnect(this._dashContainerDestroyId);
+      this.dashContainerEvents = (this.dashContainerEvents ?? [])
+        .filter(id => id !== this._dashContainerDestroyId);
+      this._dashContainerDestroyId = null;
     }
 
     this._disconnectScreenSaver();
@@ -232,13 +279,14 @@ export default class DashAnimatorExtension extends Extension {
     this.urgent_bounce = this._settings.get_boolean('urgent-bounce');
   }
 
-  _findChildByName(actor, name) {
+  _findChildByName(actor, name, maxDepth = 4, currentDepth = 0) {
     if (!actor) return null;
     if (actor.name === name) return actor;
+    if (currentDepth >= maxDepth) return null;
 
     let children = actor.get_children();
     for (let i = 0; i < children.length; i++) {
-      let found = this._findChildByName(children[i], name);
+      let found = this._findChildByName(children[i], name, maxDepth, currentDepth + 1);
       if (found) return found;
     }
     return null;
@@ -267,28 +315,46 @@ export default class DashAnimatorExtension extends Extension {
 
 
 
+    this._disconnectDashEvents();
+    this._disconnectIconEvents();
     this.dash = this._findChildByName(this.dashContainer, 'dash');
     this._patchTrashUnpinDrop();
+    this._iconsDirty = true;
     this.dashEvents = [];
     this.dashEvents.push(
-      this.dash.connect('icon-size-changed', this._startAnimation.bind(this))
+      { actor: this.dash._box, id: this.dash._box.connect('child-added', () => { this._iconsDirty = true; }) },
+      { actor: this.dash._box, id: this.dash._box.connect('child-removed', () => { this._iconsDirty = true; }) },
+      {
+        actor: this.dash, id: this.dash.connect('icon-size-changed', () => {
+          this._iconsDirty = true;
+          this._startAnimation();
+        })
+      }
     );
 
     this.dashContainer.set_reactive(true);
     this.dashContainer.set_track_hover(true);
 
     this.dashContainerEvents = [];
-    this.dashContainerEvents.push(
-      this.dashContainer.connect('destroy', () => {
-        this.animator.disable();
-        this.animator.enable();
-        this.dashContainer = null;
+    this._dashContainerDestroyId = this.dashContainer.connect('destroy', () => {
+      this._iconsDirty = true;
+      this._disconnectDashEvents();
+      this._disconnectIconEvents();
+      this.dashContainerEvents = [];
+      this._dashContainerDestroyId = null;
+      this.dash = null;
+      if (!this.running || !this.animator) return;
+      this.animator.disable();
+      this.animator.dashContainer = null;
+      this.animator.enable();
+      this.dashContainer = null;
+      if (!this._findDashIntervalId)
         this._findDashIntervalId = setInterval(
           this._findDashContainer.bind(this),
           500
         );
-      })
-    );
+    });
+    this.dashContainerEvents.push(this._dashContainerDestroyId);
 
     // hooks
     this.dashContainer.__animateIn = this.dashContainer._animateIn;
@@ -305,30 +371,30 @@ export default class DashAnimatorExtension extends Extension {
       this._startAnimation();
       this.dashContainer.__animateIn(time, delay);
     };
-this.dashContainer._animateOut = (time, delay) => {
-  if (this.animator && this.animator.isJumping()) {
-    this._pendingHideForUrgentBounce = true;
-    this.dashContainer.__animateIn(0.2, 0);
-    if (this._jumpHideTimer) clearInterval(this._jumpHideTimer);
-    this._jumpHideTimer = setInterval(() => {
-      if (!this.animator.isJumping()) {
-        clearInterval(this._jumpHideTimer);
-        this._jumpHideTimer = null;
-        if (!this._isHidden) {
-          this._isHidden = true;
-          this._pendingHideForUrgentBounce = false;
-          if (this.animator) this.animator.pauseUrgentBounce();
-          this.dashContainer.__animateOut(time, delay);
-        }
+    this.dashContainer._animateOut = (time, delay) => {
+      if (this.animator && this.animator.isJumping()) {
+        this._pendingHideForUrgentBounce = true;
+        this.dashContainer.__animateIn(0.2, 0);
+        if (this._jumpHideTimer) clearInterval(this._jumpHideTimer);
+        this._jumpHideTimer = setInterval(() => {
+          if (!this.animator.isJumping()) {
+            clearInterval(this._jumpHideTimer);
+            this._jumpHideTimer = null;
+            if (!this._isHidden) {
+              this._isHidden = true;
+              this._pendingHideForUrgentBounce = false;
+              if (this.animator) this.animator.pauseUrgentBounce();
+              this.dashContainer.__animateOut(time, delay);
+            }
+          }
+        }, 100);
+        return;
       }
-    }, 100);
-    return;
-  }
-  this._isHidden = true;
-  this._pendingHideForUrgentBounce = false;
-  if (this.animator) this.animator.pauseUrgentBounce();
-  this.dashContainer.__animateOut(time, delay);
-};
+      this._isHidden = true;
+      this._pendingHideForUrgentBounce = false;
+      if (this.animator) this.animator.pauseUrgentBounce();
+      this.dashContainer.__animateOut(time, delay);
+    };
 
     this.animator._animate();
     return true;
@@ -336,6 +402,11 @@ this.dashContainer._animateOut = (time, delay) => {
 
   _findIcons() {
     if (!this.dash || !this.dashContainer) return [];
+
+    if (!this._iconsDirty && this.dashContainer._icons) {
+      return this.dashContainer._icons;
+    }
+    this._iconsDirty = false;
 
     let dashChildren = this.dash._box.get_children();
 
@@ -350,6 +421,8 @@ this.dashContainer._animateOut = (time, delay) => {
           }
         }
       );
+      if (!this._iconEvents) this._iconEvents = [];
+      this._iconEvents.push({ actor: this.dash.showAppsButton, id: this.dash.showAppsButton._checkEventId });
     }
 
     let icons = dashChildren.filter((actor) => {
@@ -382,7 +455,7 @@ this.dashContainer._animateOut = (time, delay) => {
       let appIcon = appwell.child && appwell.child._delegate;
       if (appIcon && !appIcon._dashAnimatorUrgentHooked) {
         appIcon._dashAnimatorUrgentHooked = true;
-        appIcon.connect('notify::urgent', () => {
+        let id = appIcon.connect('notify::urgent', () => {
           if (this.urgent_bounce && appIcon.urgent) {
             if (this.animator) this.animator.requestUrgentBounce(appwell, true);
             if (this.dashContainer && this.dashContainer._animateIn)
@@ -391,6 +464,8 @@ this.dashContainer._animateOut = (time, delay) => {
             if (this.animator) this.animator.clearUrgentBounce(appwell);
           }
         });
+        if (!this._iconEvents) this._iconEvents = [];
+        this._iconEvents.push({ actor: appIcon, id: id });
       }
     });
 
@@ -422,48 +497,48 @@ this.dashContainer._animateOut = (time, delay) => {
     return icons;
   }
 
-_patchTrashUnpinDrop() {
-  if (!this.dash || this.dash._cupertinoTrashUnpinPatched) return;
+  _patchTrashUnpinDrop() {
+    if (!this.dash || this.dash._cupertinoTrashUnpinPatched) return;
 
-  const originalHandleDragOver = this.dash.handleDragOver?.bind(this.dash);
-  const originalAcceptDrop = this.dash.acceptDrop?.bind(this.dash);
+    const originalHandleDragOver = this.dash.handleDragOver?.bind(this.dash);
+    const originalAcceptDrop = this.dash.acceptDrop?.bind(this.dash);
 
-  this.dash._cupertinoTrashUnpinPatched = {
-    handleDragOver: this.dash.handleDragOver,
-    acceptDrop: this.dash.acceptDrop,
-  };
+    this.dash._cupertinoTrashUnpinPatched = {
+      handleDragOver: this.dash.handleDragOver,
+      acceptDrop: this.dash.acceptDrop,
+    };
 
-  this.dash.handleDragOver = (source, actor, x, y, time) => {
-    // 1. Check if we are over the trash first
-    if (this._isPointerOverTrash()) {
-      // 2. If it's a favorite, allow the drop (to trigger unpinning)
-      if (this._canUnpinDraggedFavoriteOnTrash(source)) {
-        return DND.DragMotionResult.MOVE_DROP;
+    this.dash.handleDragOver = (source, actor, x, y, time) => {
+      // 1. Check if we are over the trash first
+      if (this._isPointerOverTrash()) {
+        // 2. If it's a favorite, allow the drop (to trigger unpinning)
+        if (this._canUnpinDraggedFavoriteOnTrash(source)) {
+          return DND.DragMotionResult.MOVE_DROP;
+        }
+        // 3. If it's NOT a favorite, explicitly return NO_DROP 
+        //    to prevent the dock from trying to pin it.
+        return DND.DragMotionResult.NO_DROP;
       }
-      // 3. If it's NOT a favorite, explicitly return NO_DROP 
-      //    to prevent the dock from trying to pin it.
-      return DND.DragMotionResult.NO_DROP;
-    }
 
-    return originalHandleDragOver?.(source, actor, x, y, time) ?? DND.DragMotionResult.CONTINUE;
-  };
+      return originalHandleDragOver?.(source, actor, x, y, time) ?? DND.DragMotionResult.CONTINUE;
+    };
 
-  this.dash.acceptDrop = (source, actor, x, y, time) => {
-    // 1. If over trash and it's a favorite, remove it
-    if (this._isPointerOverTrash() && this._canUnpinDraggedFavoriteOnTrash(source)) {
-      const app = this._getDraggedApp(source);
-      AppFavorites.getAppFavorites().removeFavorite(app.get_id());
-      return true;
-    }
-    
-    // 2. If over trash but NOT a favorite, return false to block the drop
-    if (this._isPointerOverTrash()) {
-      return false;
-    }
+    this.dash.acceptDrop = (source, actor, x, y, time) => {
+      // 1. If over trash and it's a favorite, remove it
+      if (this._isPointerOverTrash() && this._canUnpinDraggedFavoriteOnTrash(source)) {
+        const app = this._getDraggedApp(source);
+        AppFavorites.getAppFavorites().removeFavorite(app.get_id());
+        return true;
+      }
 
-    return originalAcceptDrop?.(source, actor, x, y, time) ?? false;
-  };
-}
+      // 2. If over trash but NOT a favorite, return false to block the drop
+      if (this._isPointerOverTrash()) {
+        return false;
+      }
+
+      return originalAcceptDrop?.(source, actor, x, y, time) ?? false;
+    };
+  }
 
   _unpatchTrashUnpinDrop() {
     if (!this.dash?._cupertinoTrashUnpinPatched) return;
@@ -521,12 +596,12 @@ _patchTrashUnpinDrop() {
   }
 
   _onFocusWindow() {
-    if (this.animator)
+    if (this.animator?._onFocusWindow)
       this.animator._onFocusWindow();
   }
 
   _onFullScreen() {
-    if (this.animator)
+    if (this.animator?._onFullScreen)
       this.animator._onFullScreen();
 
     // Force-hide dock in fullscreen — macOS dock never shows in fullscreen
@@ -557,63 +632,6 @@ _patchTrashUnpinDrop() {
     } catch (e) { return null; }
   }
 
-  // Expand .side.shrink selectors to also match .side (non-shrink),
-  // so D2D's custom-theme-shrink toggle has no effect on our styling.
-  // Calls callback(expandedFile) asynchronously — falls back to original on error.
-  _expandCssAliasesAsync(cssFile, fileName, callback) {
-    cssFile.load_contents_async(null, (file, result) => {
-      try {
-        const [ok, bytes] = file.load_contents_finish(result);
-        if (!ok) { callback(cssFile); return; }
-
-        let css = new TextDecoder().decode(bytes);
-        const badgeUri = Gio.File.new_for_path(`${this.path}/assets/notification-badge.svg`).get_uri();
-        css = css.replaceAll('../assets/notification-badge.svg', badgeUri);
-
-        css = css.replace(/([^{}]+)\{/g, (match, selectors) => {
-          if (selectors.trim().startsWith('@')) return match;
-
-          let newSelectors = selectors.split(',').map(s => {
-            let hasShrink = false;
-            for (const side of ['bottom', 'top', 'left', 'right']) {
-              if (s.includes(`.${side}.shrink`)) {
-                hasShrink = true;
-                break;
-              }
-            }
-            if (hasShrink) {
-              return s.replace(/\.shrink/g, '') + ',' + s;
-            }
-            return s;
-          }).join(',');
-
-          return newSelectors + '{';
-        });
-
-        const tmpPath = GLib.build_filenamev([GLib.get_tmp_dir(), `c12r-${fileName}`]);
-        const tmpFile = Gio.File.new_for_path(tmpPath);
-        tmpFile.replace_contents_async(
-          new TextEncoder().encode(css),
-          null, false,
-          Gio.FileCreateFlags.REPLACE_DESTINATION,
-          null,
-          (_f, res) => {
-            try {
-              _f.replace_contents_finish(res);
-              callback(tmpFile);
-            } catch (e) {
-              log(`[cupertinisator] alias write failed, using original: ${e.message}`);
-              callback(cssFile);
-            }
-          }
-        );
-      } catch (e) {
-        log(`[cupertinisator] alias expansion failed, using original: ${e.message}`);
-        callback(cssFile);
-      }
-    });
-  }
-
   _applyThemeOverride() {
     if (this._themeApplyTimeoutId) {
       GLib.source_remove(this._themeApplyTimeoutId);
@@ -625,7 +643,7 @@ _patchTrashUnpinDrop() {
     }
 
     if (!this._settings.get_boolean('override-theming')) {
-      this._removeThemeOverride(true);
+      this._removeThemeOverride();
       if (this.animator) this.animator.reloadIcons();
       return;
     }
@@ -644,53 +662,55 @@ _patchTrashUnpinDrop() {
     const fileName = `${theme}-${scheme}.css`;
     const cssFile = Gio.File.new_for_path(`${this.path}/themes/${fileName}`);
 
-    log(`[cupertinisator] path: ${this.path}`);
-    log(`[cupertinisator] looking for: ${cssFile.get_path()}`);
-    log(`[cupertinisator] exists: ${cssFile.query_exists(null)}`);
+    cssFile.query_info_async(
+      Gio.FILE_ATTRIBUTE_STANDARD_TYPE,
+      Gio.FileQueryInfoFlags.NONE,
+      GLib.PRIORITY_DEFAULT,
+      null,
+      (file, res) => {
+        try {
+          file.query_info_finish(res);
+        } catch (e) {
+          log(`[cupertinisator] theme file not found: ${fileName}`);
+          return;
+        }
 
-    if (!cssFile.query_exists(null)) {
-      log(`[cupertinisator] theme file not found: ${fileName}`);
-      return;
-    }
+        const applyThemeNow = () => {
+          this._removeThemeOverride();
 
-    const applyThemeNow = () => {
-      this._removeThemeOverride(true);
+          if (!this.running) return;
 
-      this._expandCssAliasesAsync(cssFile, fileName, (fileToLoad) => {
-        // Guard: extension may have been disabled while async op was in flight
-        if (!this.running) return;
+          const themeContext = St.ThemeContext.get_for_stage(global.stage);
+          const stTheme = themeContext.get_theme();
+          stTheme.load_stylesheet(cssFile);
+          this._loadedThemeFile = cssFile;
 
-        const themeContext = St.ThemeContext.get_for_stage(global.stage);
-        const stTheme = themeContext.get_theme();
-        stTheme.load_stylesheet(fileToLoad);
-        this._loadedThemeFile = fileToLoad;
+          themeContext.emit('changed');
+          if (this.animator) this.animator.reloadIcons();
 
-        St.ThemeContext.get_for_stage(global.stage).emit('changed');
-        if (this.animator) this.animator.reloadIcons();
+          // Slide back in after theme is applied
+          this._themeInTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
+            this._themeInTimeoutId = null;
+            if (this.dashContainer && this.dashContainer.__animateIn)
+              this.dashContainer.__animateIn(0.2, 0);
+            return GLib.SOURCE_REMOVE;
+          });
+        };
 
-        // Slide back in after theme is applied
-        this._themeInTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
-          this._themeInTimeoutId = null;
-          if (this.dashContainer && this.dashContainer.__animateIn)
-            this.dashContainer.__animateIn(0.2, 0);
-          return GLib.SOURCE_REMOVE;
-        });
-      });
-    };
-
-    // Slide out first, apply theme after animation completes, then slide back in
-    if (this.dashContainer && this.dashContainer.__animateOut) {
-      this.dashContainer.__animateOut(0.2, 0);
-      this._themeApplyTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
-        this._themeApplyTimeoutId = null;
-        applyThemeNow();
-        return GLib.SOURCE_REMOVE;
-      });
-    } else {
-      applyThemeNow();
-    }
+        // Slide out first, apply theme after animation completes, then slide back in
+        if (this.dashContainer && this.dashContainer.__animateOut) {
+          this.dashContainer.__animateOut(0.2, 0);
+          this._themeApplyTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 250, () => {
+            this._themeApplyTimeoutId = null;
+            applyThemeNow();
+            return GLib.SOURCE_REMOVE;
+          });
+        } else {
+          applyThemeNow();
+        }
+      }
+    );
   }
-
 
   _removeThemeOverride() {
     if (this._loadedThemeFile) {

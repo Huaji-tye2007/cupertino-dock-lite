@@ -13,46 +13,8 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         } catch (e) { return null; }
     }
 
-    _buildComboRowString(settings, signals, key, title, subtitle, options) {
-        const model = new Gtk.StringList();
-        for (const opt of options) {
-            model.append(opt.label);
-        }
-
-        const row = new Adw.ComboRow({
-            title,
-            subtitle,
-            model,
-        });
-
-        const syncFromSettings = () => {
-            const val = settings.get_string(key);
-            const index = options.findIndex(opt => opt.value === val);
-            if (index !== -1) {
-                row.selected = index;
-            }
-        };
-
-        syncFromSettings();
-
-        row.connect('notify::selected', () => {
-            const val = options[row.selected]?.value;
-            if (val && settings.get_string(key) !== val) {
-                settings.set_string(key, val);
-            }
-        });
-
-        const sigId = settings.connect(`changed::${key}`, syncFromSettings);
-        signals.push(sigId);
-
-        return row;
-    }
-
     fillPreferencesWindow(window) {
-        window.set_default_size(700, 800);
-
         const settings = this.getSettings('org.gnome.shell.extensions.cupertino-dock-lite');
-        const settingsSignalIds = [];
 
         // ── Home page ────────────────────────────────────────────────────────
         const homePage = new Adw.PreferencesPage({
@@ -63,6 +25,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         const homeGroup = new Adw.PreferencesGroup();
         const homeBox = new Gtk.Box({
             orientation: Gtk.Orientation.VERTICAL,
+            halign: Gtk.Align.CENTER,
             valign: Gtk.Align.CENTER,
             spacing: 12,
             margin_top: 32,
@@ -74,7 +37,6 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         const icon = new Gtk.Image({
             icon_name: 'plank',
             pixel_size: 128,
-            halign: Gtk.Align.CENTER,
         });
         homeBox.append(icon);
 
@@ -83,8 +45,6 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             css_classes: ['title-1'],
             justify: Gtk.Justification.CENTER,
             halign: Gtk.Align.CENTER,
-            wrap: true,
-            hexpand: true,
         });
         homeBox.append(titleLabel);
 
@@ -95,112 +55,11 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             halign: Gtk.Align.CENTER,
             wrap: true,
             max_width_chars: 60,
-            hexpand: true,
         });
         homeBox.append(descriptionLabel);
 
-        let versionName = this.metadata['version-name'] || '';
-        if (!versionName && this.dir) {
-            try {
-                const file = this.dir.get_child('metadata.json');
-                const [, contents] = file.load_contents(null);
-                const decoder = new TextDecoder('utf-8');
-                const parsedMetadata = JSON.parse(decoder.decode(contents));
-                versionName = parsedMetadata['version-name'] || '';
-            } catch (e) {
-                console.error('Failed to parse metadata.json:', e);
-            }
-        }
-
-        versionName = String(versionName);
-
-        const versionLabel = versionName
-            ? (versionName.startsWith('v') ? versionName : `v${versionName}`)
-            : '';
-
-        if (versionLabel) {
-            const versionButton = new Gtk.Button({
-                label: versionLabel,
-                css_classes: ['app-version', 'text-button', 'pill'],
-                halign: Gtk.Align.CENTER,
-                margin_top: 24,
-            });
-            homeBox.append(versionButton);
-        }
-
         homeGroup.add(homeBox);
-
-        // ── Support/Donations group ──────────────────────────────────────────
-        const supportGroup = new Adw.PreferencesGroup({
-            title: 'Enjoying this extension?',
-            description: 'Consider supporting its development!',
-        });
-
-        let donations = this.metadata.donations;
-        if (!donations && this.dir) {
-            try {
-                const file = this.dir.get_child('metadata.json');
-                const [, contents] = file.load_contents(null);
-                const decoder = new TextDecoder('utf-8');
-                donations = JSON.parse(decoder.decode(contents)).donations;
-            } catch (e) {
-                console.error('Failed to parse metadata.json:', e);
-            }
-        }
-        donations = donations || {
-            kofi: 'mikerinzler69',
-            custom: 'https://saweria.co/rinzler69'
-        };
-
-        const kofiRow = new Adw.ActionRow({
-            title: 'Ko-fi',
-            subtitle: `ko-fi.com/${donations.kofi}`,
-        });
-
-        const kofiIcon = new Gtk.Image({
-            icon_name: 'emblem-favorite-symbolic',
-            pixel_size: 32,
-            valign: Gtk.Align.CENTER,
-        });
-        kofiRow.add_prefix(kofiIcon);
-
-        const kofiBtn = new Gtk.Button({
-            icon_name: 'adw-external-link-symbolic',
-            tooltip_text: 'Open Ko-fi',
-            css_classes: ['flat'],
-            valign: Gtk.Align.CENTER,
-        });
-        kofiBtn.connect('clicked', () => {
-            Gtk.show_uri(window, `https://ko-fi.com/${donations.kofi}`, GLib.CURRENT_TIME);
-        });
-        kofiRow.add_suffix(kofiBtn);
-
-        supportGroup.add(kofiRow);
-
-        const saweriaRow = new Adw.ActionRow({
-            title: 'Saweria',
-            subtitle: donations.custom.replace('https://', ''),
-        });
-
-        const saweriaIcon = new Gtk.Image({
-            icon_name: 'emblem-favorite-symbolic',
-            pixel_size: 32,
-            valign: Gtk.Align.CENTER,
-        });
-        saweriaRow.add_prefix(saweriaIcon);
-
-        const saweriaBtn = new Gtk.Button({
-            icon_name: 'adw-external-link-symbolic',
-            tooltip_text: 'Open Saweria',
-            css_classes: ['flat'],
-            valign: Gtk.Align.CENTER,
-        });
-        saweriaBtn.connect('clicked', () => {
-            Gtk.show_uri(window, donations.custom, GLib.CURRENT_TIME);
-        });
-        saweriaRow.add_suffix(saweriaBtn);
-
-        supportGroup.add(saweriaRow);
+        homePage.add(homeGroup);
 
         // ── Resources group ──────────────────────────────────────────────────
         const resourcesGroup = new Adw.PreferencesGroup({ title: 'Resources' });
@@ -229,9 +88,6 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         repoRow.add_suffix(openBtn);
 
         resourcesGroup.add(repoRow);
-
-        homePage.add(homeGroup);
-        homePage.add(supportGroup);
         homePage.add(resourcesGroup);
 
         window.add(homePage);
@@ -320,17 +176,34 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         });
         themePage.add(themeStyleGroup);
 
-        const themeRow = this._buildComboRowString(
-            settings,
-            settingsSignalIds,
-            'dock-theme',
-            'Dock Style',
-            'Mojave sits flush at the screen edge, 10px border radius · Big Sur floats above it, 22px border radius',
-            [
-                { value: 'mojave', label: 'Mojave' },
-                { value: 'bigsur', label: 'Big Sur' }
-            ]
-        );
+        const themeRow = new Adw.ActionRow({
+            title: 'Dock Style',
+            subtitle: 'Mojave sits flush at the screen edge, 10px border radius · Big Sur floats above it, 22px border radius',
+        });
+        const themeBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            valign: Gtk.Align.CENTER,
+            css_classes: ['linked'],
+        });
+        const mojaveBtn = new Gtk.ToggleButton({ label: 'Mojave' });
+        const bigsurBtn = new Gtk.ToggleButton({ label: 'Big Sur', group: mojaveBtn });
+        themeBox.append(mojaveBtn);
+        themeBox.append(bigsurBtn);
+        const syncThemeButtons = () => {
+            const val = settings.get_string('dock-theme');
+            mojaveBtn.active = val === 'mojave';
+            bigsurBtn.active = val === 'bigsur';
+        };
+        syncThemeButtons();
+        mojaveBtn.connect('toggled', () => { 
+            if (mojaveBtn.active) settings.set_string('dock-theme', 'mojave'); 
+        });
+        bigsurBtn.connect('toggled', () => { 
+            if (bigsurBtn.active) settings.set_string('dock-theme', 'bigsur'); 
+        });
+
+        settings.connect('changed::dock-theme', syncThemeButtons);
+        themeRow.add_suffix(themeBox);
         themeStyleGroup.add(themeRow);
 
         const colorGroup = new Adw.PreferencesGroup({ title: 'Color Scheme' });
@@ -343,23 +216,39 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         settings.bind('theme-aware', themeAwareRow, 'active', 0);
         colorGroup.add(themeAwareRow);
 
-        const colorRow = this._buildComboRowString(
-            settings,
-            settingsSignalIds,
-            'dock-color-scheme',
-            'Color Scheme',
-            'Manual override when Follow System Theme is off',
-            [
-                { value: 'light', label: 'Light' },
-                { value: 'dark', label: 'Dark' }
-            ]
-        );
+        const colorRow = new Adw.ActionRow({
+            title: 'Color Scheme',
+            subtitle: 'Manual override when Follow System Theme is off',
+        });
+        const colorBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            valign: Gtk.Align.CENTER,
+            css_classes: ['linked'],
+        });
+        const lightBtn = new Gtk.ToggleButton({ label: 'Light' });
+        const darkBtn = new Gtk.ToggleButton({ label: 'Dark', group: lightBtn });
+        colorBox.append(lightBtn);
+        colorBox.append(darkBtn);
+        const syncColorButtons = () => {
+            const val = settings.get_string('dock-color-scheme');
+            lightBtn.active = val === 'light';
+            darkBtn.active = val === 'dark';
+        };
+        syncColorButtons();
+        lightBtn.connect('toggled', () => { 
+            if (lightBtn.active) settings.set_string('dock-color-scheme', 'light'); 
+        });
+        darkBtn.connect('toggled', () => { 
+            if (darkBtn.active) settings.set_string('dock-color-scheme', 'dark'); 
+        });
+
+        settings.connect('changed::dock-color-scheme', syncColorButtons);
+        colorRow.add_suffix(colorBox);
         colorGroup.add(colorRow);
 
         const updateColorSensitivity = () => { colorRow.sensitive = !settings.get_boolean('theme-aware'); };
         updateColorSensitivity();
-        const colorSensSig = settings.connect('changed::theme-aware', updateColorSensitivity);
-        settingsSignalIds.push(colorSensSig);
+        settings.connect('changed::theme-aware', updateColorSensitivity);
 
         const updateThemeSensitivity = () => {
             const on = settings.get_boolean('override-theming');
@@ -367,8 +256,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             colorGroup.sensitive = on;
         };
         updateThemeSensitivity();
-        const themeSensSig = settings.connect('changed::override-theming', updateThemeSensitivity);
-        settingsSignalIds.push(themeSensSig);
+        settings.connect('changed::override-theming', updateThemeSensitivity);
 
         window.add(themePage);
 
@@ -474,13 +362,6 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             else
                 showModal('Restore Failed', 'Something went wrong:\n' + result.error);
             refreshCamleStatus();
-        });
-
-        window.connect('destroy', () => {
-            for (const id of settingsSignalIds) {
-                settings.disconnect(id);
-            }
-            settingsSignalIds.length = 0;
         });
 
         window.add(miscPage);

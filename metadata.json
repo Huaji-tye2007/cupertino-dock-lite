@@ -17,5 +17,11 @@
   "schema-id": "org.gnome.shell.extensions.cupertino-dock-lite",
   "gettext-domain": "cupertino-dock-lite",
   "settings-schema": "org.gnome.shell.extensions.cupertino-dock-lite",
-  "version": 1.1
+  "version": 1.1,
+  "version-name": "1.1.0",
+  "donations": {
+    "paypal": "ArtFazil",
+    "kofi": "mikerinzler69",
+    "custom": "https://saweria.co/rinzler69"
+  }
 }
