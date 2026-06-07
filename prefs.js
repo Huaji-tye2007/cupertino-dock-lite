@@ -35,14 +35,19 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         syncFromSettings();
 
-        row.connectObject('notify::selected', () => {
+        const rowHandlerId = row.connect('notify::selected', () => {
             const val = options[row.selected]?.value;
             if (val && settings.get_string(key) !== val) {
                 settings.set_string(key, val);
             }
-        }, target);
+        });
 
-        settings.connectObject(`changed::${key}`, syncFromSettings, target);
+        const settingsHandlerId = settings.connect(`changed::${key}`, syncFromSettings);
+
+        target.connect('destroy', () => {
+            row.disconnect(rowHandlerId);
+            settings.disconnect(settingsHandlerId);
+        });
 
         return row;
     }
@@ -313,7 +318,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         settings.bind('override-theming', overrideRow, 'active', 0);
         themeGroup.add(overrideRow);
 
-        const themeStyleGroup = new Adw.PreferencesGroup({ 
+        const themeStyleGroup = new Adw.PreferencesGroup({
             title: 'Style',
         });
         themePage.add(themeStyleGroup);
@@ -356,7 +361,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         const updateColorSensitivity = () => { colorRow.sensitive = !settings.get_boolean('theme-aware'); };
         updateColorSensitivity();
-        settings.connectObject('changed::theme-aware', updateColorSensitivity, window);
+        const colorSensitivityHandlerId = settings.connect('changed::theme-aware', updateColorSensitivity);
 
         const updateThemeSensitivity = () => {
             const on = settings.get_boolean('override-theming');
@@ -364,7 +369,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             colorGroup.sensitive = on;
         };
         updateThemeSensitivity();
-        settings.connectObject('changed::override-theming', updateThemeSensitivity, window);
+        const themeSensitivityHandlerId = settings.connect('changed::override-theming', updateThemeSensitivity);
 
         window.add(themePage);
 
@@ -473,7 +478,8 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         });
 
         window.connect('destroy', () => {
-            settings.disconnectObject(window);
+            settings.disconnect(colorSensitivityHandlerId);
+            settings.disconnect(themeSensitivityHandlerId);
         });
 
         window.add(miscPage);
