@@ -13,7 +13,7 @@
   "schema-id": "org.gnome.shell.extensions.cupertino-dock-lite",
   "gettext-domain": "cupertino-dock-lite",
   "settings-schema": "org.gnome.shell.extensions.cupertino-dock-lite",
-  "version-name": "1.0.0",
+  "version-name": "1.0.1",
   "donations": {
     "paypal": "ArtFazil",
     "kofi": "mikerinzler69",
