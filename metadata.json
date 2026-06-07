@@ -1,9 +1,6 @@
 {
   "description": "Adds macOS-style bounce animations and optional Cupertino dock theming. Part of the WACK project.",
   "name": "WACK - Cupertino Dock Lite",
-  "original-authors": [
-    "rinzler69-wastaken"
-  ],
   "shell-version": [
     "46",
     "47",
@@ -16,7 +13,7 @@
   "schema-id": "org.gnome.shell.extensions.cupertino-dock-lite",
   "gettext-domain": "cupertino-dock-lite",
   "settings-schema": "org.gnome.shell.extensions.cupertino-dock-lite",
-  "version-name": "1.1.0",
+  "version-name": "1.0.0",
   "donations": {
     "paypal": "ArtFazil",
     "kofi": "mikerinzler69",

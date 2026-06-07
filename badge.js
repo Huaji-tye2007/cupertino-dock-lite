@@ -5,38 +5,33 @@ export class BadgeManager {
   constructor() {
     this._icons = new Set();
     this._notificationsMonitor = null;
-    this._monitorChangedId = null;
   }
 
   // Called by animator.js once D2D is ready.
   setNotificationsMonitor(monitor) {
-    if (this._monitorChangedId && this._notificationsMonitor) {
-      this._notificationsMonitor.disconnect(this._monitorChangedId);
-      this._monitorChangedId = null;
+    if (this._notificationsMonitor) {
+      this._notificationsMonitor.disconnectObject(this);
     }
     this._notificationsMonitor = monitor;
     if (monitor) {
-      try {
-        this._monitorChangedId = monitor.connect('changed', () => {
-          this._icons.forEach(uiIcon => { try { this._applyBadge(uiIcon); } catch (e) { } });
-          try { this.onRebuild?.(); } catch (e) { }
-        });
-      } catch (e) { }
+      monitor.connectObject('changed', () => {
+        this._icons.forEach(uiIcon => this._applyBadge(uiIcon));
+        this.onRebuild?.();
+      }, this);
     }
-    this._icons.forEach(uiIcon => { try { this._applyBadge(uiIcon); } catch (e) { } });
-    try { this.onRebuild?.(); } catch (e) { }
+    this._icons.forEach(uiIcon => this._applyBadge(uiIcon));
+    this.onRebuild?.();
   }
 
   _getCount(appId) {
     if (!appId || !this._notificationsMonitor) return 0;
-    try { return this._notificationsMonitor.getAppNotificationsCount(appId) ?? 0; } catch (e) { return 0; }
+    return this._notificationsMonitor.getAppNotificationsCount(appId) ?? 0;
   }
 
   destroy() {
-    if (this._monitorChangedId && this._notificationsMonitor) {
-      this._notificationsMonitor.disconnect(this._monitorChangedId);
+    if (this._notificationsMonitor) {
+      this._notificationsMonitor.disconnectObject(this);
     }
-    this._monitorChangedId = null;
     this._notificationsMonitor = null;
     this._icons.clear();
   }
@@ -52,78 +47,72 @@ export class BadgeManager {
   }
 
   attachToIcon(uiIcon) {
-    try {
-      const badge = new Clutter.Clone({
-        name: 'cupertinisator-badge-container',
-        visible: false,
-        reactive: false,
-      });
+    const badge = new Clutter.Clone({
+      name: 'cupertinisator-badge-container',
+      visible: false,
+      reactive: false,
+    });
 
-      badge._geometryReady = false;
-      badge.set_pivot_point(0, 0);
+    badge._geometryReady = false;
+    badge.set_pivot_point(0, 0);
 
-      uiIcon.add_child(badge);
-      uiIcon._badge = badge;
-      this._icons.add(uiIcon);
-    } catch (e) { }
+    uiIcon.add_child(badge);
+    uiIcon._badge = badge;
+    this._icons.add(uiIcon);
   }
 
   updateIcon(uiIcon, iconSize, countOverride = null, cloneActive = false) {
-    try {
-      const badge = uiIcon._badge;
-      if (!badge) return;
+    const badge = uiIcon._badge;
+    if (!badge) return;
 
-      const appId = uiIcon._appwell?.app?.get_id() ?? null;
-      const count = countOverride ?? this._getCount(appId);
-      const shouldShow = cloneActive && count > 0;
+    const appId = uiIcon._appwell?.app?.get_id() ?? null;
+    const count = countOverride ?? this._getCount(appId);
+    const shouldShow = cloneActive && count > 0;
 
-      this._positionLikeD2d(uiIcon, badge, iconSize);
+    this._positionLikeD2d(uiIcon, badge, iconSize);
 
-      badge._geometryReady = true;
-      badge.visible = shouldShow;
-    } catch (e) { }
+    badge._geometryReady = true;
+    badge.visible = shouldShow;
   }
 
   _positionLikeD2d(uiIcon, badge, iconSize) {
     const d2dBadge = this._getD2dBadgeActor(uiIcon._appwell);
     const badgeBin = this._getD2dBadgeBin(uiIcon._appwell);
     if (d2dBadge && uiIcon._bin) {
-      try {
-        const badgeSize = this._getTransformedSize(d2dBadge) || [0, 0];
-        const lastBadgeSize = badge._lastBadgeSize || [0, 0];
+      const badgeSize = this._getTransformedSize(d2dBadge) || [0, 0];
+      const lastBadgeSize = badge._lastBadgeSize || [0, 0];
 
-        const needsUpdate = !badge._cachedOffsetReady ||
-                            badge._lastIconSize !== iconSize ||
-                            lastBadgeSize[0] !== badgeSize[0] ||
-                            lastBadgeSize[1] !== badgeSize[1];
+      const needsUpdate = !badge._cachedOffsetReady ||
+                          badge._lastIconSize !== iconSize ||
+                          lastBadgeSize[0] !== badgeSize[0] ||
+                          lastBadgeSize[1] !== badgeSize[1];
 
-        if (needsUpdate) {
-          const oldTx = badgeBin ? badgeBin.translation_x : 0;
-          if (badgeBin) badgeBin.translation_x = 0;
+      if (needsUpdate) {
+        const oldTx = badgeBin ? badgeBin.translation_x : 0;
+        if (badgeBin) badgeBin.translation_x = 0;
 
-          const badgePos = d2dBadge.get_transformed_position();
-          const iconPos = uiIcon._bin.get_transformed_position();
+        const badgePos = d2dBadge.get_transformed_position();
+        const iconPos = uiIcon._bin.get_transformed_position();
 
-          if (badgeBin) badgeBin.translation_x = oldTx;
+        if (badgeBin) badgeBin.translation_x = oldTx;
 
-          badge._cachedX = Math.round(badgePos[0] - iconPos[0]);
-          badge._cachedY = Math.round(badgePos[1] - iconPos[1]);
-          badge._cachedWidth = Math.round(badgeSize[0]);
-          badge._cachedHeight = Math.round(badgeSize[1]);
-          badge._cachedOffsetReady = true;
-          badge._lastIconSize = iconSize;
-          badge._lastBadgeSize = badgeSize;
+        badge._cachedX = Math.round(badgePos[0] - iconPos[0]);
+        badge._cachedY = Math.round(badgePos[1] - iconPos[1]);
+        badge._cachedWidth = Math.round(badgeSize[0]);
+        badge._cachedHeight = Math.round(badgeSize[1]);
+        badge._cachedOffsetReady = true;
+        badge._lastIconSize = iconSize;
+        badge._lastBadgeSize = badgeSize;
 
-          badge.source = d2dBadge;
-          badge.x = badge._cachedX;
-          badge.y = badge._cachedY;
-          if (badgeSize[0] > 0 && badgeSize[1] > 0) {
-            badge.set_size(badge._cachedWidth, badge._cachedHeight);
-            badge.set_scale(1, 1);
-          }
+        badge.source = d2dBadge;
+        badge.x = badge._cachedX;
+        badge.y = badge._cachedY;
+        if (badgeSize[0] > 0 && badgeSize[1] > 0) {
+          badge.set_size(badge._cachedWidth, badge._cachedHeight);
+          badge.set_scale(1, 1);
         }
-        return;
-      } catch (e) { }
+      }
+      return;
     }
 
     const fallback = Math.round(Math.max(16, iconSize * 0.42));
@@ -140,16 +129,13 @@ export class BadgeManager {
   }
 
   _getTransformedSize(actor) {
-    try {
-      const size = actor.get_transformed_size?.();
-      if (size && size[0] > 0 && size[1] > 0) return size;
-    } catch (e) { }
+    if (!actor) return null;
+    const size = typeof actor.get_transformed_size === 'function' ? actor.get_transformed_size() : null;
+    if (size && size[0] > 0 && size[1] > 0) return size;
 
-    try {
-      const width = actor.width;
-      const height = actor.height;
-      if (width > 0 && height > 0) return [width, height];
-    } catch (e) { }
+    const width = actor.width;
+    const height = actor.height;
+    if (width > 0 && height > 0) return [width, height];
 
     return null;
   }
@@ -161,34 +147,31 @@ export class BadgeManager {
   }
 
   _getD2dBadgeBin(appwell) {
-    try {
-      const container = appwell?._iconContainer;
-      if (!container) return null;
-      if (container._notificationBadgeBin) return container._notificationBadgeBin;
+    const container = appwell?._iconContainer;
+    if (!container) return null;
+    if (container._notificationBadgeBin) return container._notificationBadgeBin;
 
-      const badgeBin = container.get_children?.().find(child =>
-        child.get_children?.()?.some?.(c => c.has_style_class_name?.('notification-badge'))
-      ) ?? null;
-      if (badgeBin) {
-        container._notificationBadgeBin = badgeBin;
-      }
-      return badgeBin;
-    } catch (e) {
-      return null;
+    const children = typeof container.get_children === 'function' ? container.get_children() : [];
+    const badgeBin = children.find(child => {
+      const grandChildren = typeof child.get_children === 'function' ? child.get_children() : [];
+      return grandChildren.some(c => typeof c.has_style_class_name === 'function' && c.has_style_class_name('notification-badge'));
+    }) ?? null;
+
+    if (badgeBin) {
+      container._notificationBadgeBin = badgeBin;
     }
+    return badgeBin;
   }
 
   _findStyledBadgeActor(actor) {
-    try {
-      if (actor.has_style_class_name?.('notification-badge')) return actor;
+    if (!actor) return null;
+    if (typeof actor.has_style_class_name === 'function' && actor.has_style_class_name('notification-badge')) return actor;
 
-      const children = actor.get_children?.() ?? [];
-      for (let i = 0; i < children.length; i++) {
-        const found = this._findStyledBadgeActor(children[i]);
-        if (found) return found;
-      }
-    } catch (e) { }
-
+    const children = typeof actor.get_children === 'function' ? actor.get_children() : [];
+    for (const child of children) {
+      const found = this._findStyledBadgeActor(child);
+      if (found) return found;
+    }
     return null;
   }
 }

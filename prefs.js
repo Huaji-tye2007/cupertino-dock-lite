@@ -2,18 +2,9 @@ import GLib from 'gi://GLib';
 import Adw from 'gi://Adw';
 import Gtk from 'gi://Gtk';
 import { ExtensionPreferences } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
-import { getCamleStatus, patchCamle, restoreCamle } from './patcher.js';
 
 export default class DashAnimatorPreferences extends ExtensionPreferences {
-    _d2dExtension() {
-        try {
-            return this._extensionManager?.lookup?.('dash-to-dock@micxgx.gmail.com')
-                ?? globalThis.Main?.extensionManager?.lookup('dash-to-dock@micxgx.gmail.com')
-                ?? null;
-        } catch (e) { return null; }
-    }
-
-    _buildComboRowString(settings, target, key, title, subtitle, options) {
+    _buildComboRowString(settings, window, key, title, subtitle, options) {
         const model = new Gtk.StringList();
         for (const opt of options) {
             model.append(opt.label);
@@ -35,18 +26,16 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         syncFromSettings();
 
-        const rowHandlerId = row.connect('notify::selected', () => {
+        row.connect('notify::selected', () => {
             const val = options[row.selected]?.value;
             if (val && settings.get_string(key) !== val) {
                 settings.set_string(key, val);
             }
         });
 
-        const settingsHandlerId = settings.connect(`changed::${key}`, syncFromSettings);
-
-        target.connect('destroy', () => {
-            row.disconnect(rowHandlerId);
-            settings.disconnect(settingsHandlerId);
+        const settingsId = settings.connect(`changed::${key}`, syncFromSettings);
+        window.connect('destroy', () => {
+            settings.disconnect(settingsId);
         });
 
         return row;
@@ -102,21 +91,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         });
         homeBox.append(descriptionLabel);
 
-        let versionName = this.metadata['version-name'] || '';
-        if (!versionName && this.dir) {
-            try {
-                const file = this.dir.get_child('metadata.json');
-                const [, contents] = file.load_contents(null);
-                const decoder = new TextDecoder('utf-8');
-                const parsedMetadata = JSON.parse(decoder.decode(contents));
-                versionName = parsedMetadata['version-name'] || '';
-            } catch (e) {
-                console.error('Failed to parse metadata.json:', e);
-            }
-        }
-
-        versionName = String(versionName);
-
+        const versionName = this.metadata['version-name'] || '';
         const versionLabel = versionName
             ? (versionName.startsWith('v') ? versionName : `v${versionName}`)
             : '';
@@ -139,18 +114,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             description: 'Consider supporting its development!',
         });
 
-        let donations = this.metadata.donations;
-        if (!donations && this.dir) {
-            try {
-                const file = this.dir.get_child('metadata.json');
-                const [, contents] = file.load_contents(null);
-                const decoder = new TextDecoder('utf-8');
-                donations = JSON.parse(decoder.decode(contents)).donations;
-            } catch (e) {
-                console.error('Failed to parse metadata.json:', e);
-            }
-        }
-        donations = donations || {
+        const donations = this.metadata.donations || {
             kofi: 'mikerinzler69',
             custom: 'https://saweria.co/rinzler69'
         };
@@ -361,7 +325,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         const updateColorSensitivity = () => { colorRow.sensitive = !settings.get_boolean('theme-aware'); };
         updateColorSensitivity();
-        const colorSensitivityHandlerId = settings.connect('changed::theme-aware', updateColorSensitivity);
+        const awareId = settings.connect('changed::theme-aware', updateColorSensitivity);
 
         const updateThemeSensitivity = () => {
             const on = settings.get_boolean('override-theming');
@@ -369,119 +333,13 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             colorGroup.sensitive = on;
         };
         updateThemeSensitivity();
-        const themeSensitivityHandlerId = settings.connect('changed::override-theming', updateThemeSensitivity);
-
-        window.add(themePage);
-
-        // ── Extras page ────────────────────────────────────────────────
-        const miscPage = new Adw.PreferencesPage({
-            title: 'Extras',
-            icon_name: 'emblem-system-symbolic',
-        });
-
-        // CAMLE Patcher group
-        const camleGroup = new Adw.PreferencesGroup({
-            title: 'Compiz Alike Magic Lamp Effect',
-            description:
-                'Patches the CAMLE extension to stop windows minimizing under the dock and enable bilinear texture filtering. ' +
-                'Safely backs up original files. Recommended for Big Sur dock style.',
-        });
-        miscPage.add(camleGroup);
-
-        const camleStatusRow = new Adw.ActionRow({ title: 'Patch Status' });
-        const camleStatusLabel = new Gtk.Label({
-            label: 'Checking...',
-            css_classes: ['dim-label'],
-        });
-        camleStatusRow.add_suffix(camleStatusLabel);
-
-        // Restore — icon-only button in rounded square style
-        const restoreBtn = new Gtk.Button({
-            icon_name: 'edit-undo-symbolic',
-            tooltip_text: 'Restore original CAMLE extension.js',
-            css_classes: ['flat'],
-            valign: Gtk.Align.CENTER,
-        });
-
-        // Patch button
-        const patchBtn = new Gtk.Button({
-            label: 'Patch',
-            css_classes: ['suggested-action'],
-            valign: Gtk.Align.CENTER,
-        });
-
-        camleStatusRow.add_suffix(restoreBtn);
-        camleStatusRow.add_suffix(patchBtn);
-        camleGroup.add(camleStatusRow);
-
-        const extensionDir = this.metadata.path;
-
-        const showModal = (title, body) => {
-            const dialog = new Adw.MessageDialog({
-                heading: title,
-                body,
-                transient_for: window,
-            });
-            dialog.add_response('ok', 'OK');
-            dialog.present();
-        };
-
-        const refreshCamleStatus = () => {
-            const status = getCamleStatus(extensionDir);
-            if (status === 'not-installed') {
-                camleStatusLabel.label = 'CAMLE not installed';
-                patchBtn.sensitive = false;
-                restoreBtn.sensitive = false;
-            } else if (status === 'not-patched') {
-                camleStatusLabel.label = 'Not patched';
-                patchBtn.sensitive = true;
-                restoreBtn.sensitive = false;
-            } else {
-                camleStatusLabel.label = 'Patched';
-                patchBtn.sensitive = false;
-                restoreBtn.sensitive = true;
-            }
-        };
-        refreshCamleStatus();
-
-        patchBtn.connect('clicked', () => {
-            if (getCamleStatus(extensionDir) === 'not-installed') {
-                showModal('CAMLE Not Installed',
-                    'Compiz Alike Magic Lamp Effect is not installed.\n' +
-                    'Please install it first through the GNOME Shell Extensions website.');
-                return;
-            }
-            const result = patchCamle(extensionDir);
-            if (result.success)
-                showModal('Patch Applied',
-                    'CAMLE has been patched successfully.\n' +
-                    'Toggle CAMLE off and on, or log out and log back in to apply changes.');
-            else
-                showModal('Patch Failed', 'Something went wrong:\n' + result.error);
-            refreshCamleStatus();
-        });
-
-        restoreBtn.connect('clicked', () => {
-            if (getCamleStatus(extensionDir) !== 'patched') {
-                showModal('No Backup Found',
-                    'No backup directory found.\nYou have not patched CAMLE yet.');
-                return;
-            }
-            const result = restoreCamle(extensionDir);
-            if (result.success)
-                showModal('Restored',
-                    'CAMLE original extension.js has been restored.\n' +
-                    'Toggle CAMLE off and on, or log out and log back in to apply changes.');
-            else
-                showModal('Restore Failed', 'Something went wrong:\n' + result.error);
-            refreshCamleStatus();
-        });
+        const overrideId = settings.connect('changed::override-theming', updateThemeSensitivity);
 
         window.connect('destroy', () => {
-            settings.disconnect(colorSensitivityHandlerId);
-            settings.disconnect(themeSensitivityHandlerId);
+            settings.disconnect(awareId);
+            settings.disconnect(overrideId);
         });
 
-        window.add(miscPage);
+        window.add(themePage);
     }
 }

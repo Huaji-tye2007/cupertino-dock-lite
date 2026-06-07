@@ -2,7 +2,7 @@ UUID = $(shell python3 -c "import json; print(json.load(open('metadata.json'))['
 
 EXTENSION_DIR = ~/.local/share/gnome-shell/extensions/$(UUID)
 
-JS_FILES = extension.js animator.js prefs.js patcher.js badge.js utils.js
+JS_FILES = extension.js animator.js prefs.js badge.js
 
 .PHONY: all build install uninstall pack lint pretty
 
@@ -13,7 +13,7 @@ build: ## Compile GSettings schemas
 
 install: build ## Install extension locally
 	mkdir -p $(EXTENSION_DIR)
-	cp -R $(JS_FILES) metadata.json stylesheet.css schemas/ assets/ themes/ LICENSE README.md \
+	cp -R $(JS_FILES) metadata.json stylesheet.css schemas/ themes/ LICENSE README.md \
 		$(EXTENSION_DIR)/
 
 uninstall: ## Remove locally installed extension
@@ -26,7 +26,6 @@ pack: build ## Create a ZIP package for Extensions.gnome.org
 		$(JS_FILES) \
 		metadata.json stylesheet.css LICENSE README.md \
 		themes/*.css \
-		assets/camle-extension.js.template \
 		schemas/*.xml
 	@printf 'Created package: %s\n' "$(UUID).zip"
 

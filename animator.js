@@ -5,8 +5,6 @@ import St from 'gi://St';
 import Graphene from 'gi://Graphene';
 import Shell from 'gi://Shell';
 
-import { setTimeout, setInterval, clearInterval, clearTimeout } from './utils.js';
-
 const Point = Graphene.Point;
 
 const ANIM_INTERVAL = 15;
@@ -18,18 +16,16 @@ const ANIM_INTRO_HEIGHT = 0.6; // Initial height multiplier (1.10 = 110% of icon
 const ANIM_INTRO_SCALE_DURATION = 0.5; // Proportion of timeline spent scaling up (0.3 = 30%)
 const ANIM_INTRO_FADE_DURATION = 0.75; // Proportion of timeline spent fading in
 
-// const DOT_CANVAS_SIZE = 96;
-
 export class Animator {
   constructor() {
-    this._enabled = false;
+    this._iconsContainer = null;
     this.animationInterval = ANIM_INTERVAL;
     this._separator = null;
     this._draggableHooks = [];
   }
 
   enable() {
-    if (this._enabled) return;
+    if (this._iconsContainer) return;
     this._initialized = false;
     this._iconsContainer = new St.Widget({
       name: 'iconsContainer',
@@ -39,7 +35,6 @@ export class Animator {
 
     Main.uiGroup.add_child(this._iconsContainer);
 
-    this._enabled = true;
     this._dragging = false;
     this._oneShotId = null;
     this._relayout = 8;
@@ -52,12 +47,11 @@ export class Animator {
   }
 
   disable(preserveDragHooks = false) {
-    if (!this._enabled) {
+    if (!this._iconsContainer) {
       if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
       if (!preserveDragHooks) this._disconnectDraggableHooks();
       return;
     }
-    this._enabled = false;
     this._endAnimation();
     if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
     this._resetAppwellHooks();
@@ -73,13 +67,11 @@ export class Animator {
   }
 
   reloadIcons() {
-    if (!this._enabled) return;
-    if (this._iconsContainer) {
-      this._iconsContainer.get_children().forEach(c => {
-        this._disconnectAppwellHooks(c._appwell);
-        c.destroy();
-      });
-    }
+    if (!this._iconsContainer) return;
+    this._iconsContainer.get_children().forEach(c => {
+      this._disconnectAppwellHooks(c._appwell);
+      c.destroy();
+    });
     this._iconsCount = 0;
     this._startAnimation();
   }
@@ -248,9 +240,8 @@ export class Animator {
         if (this._initialized && c._appwell?.app && !(this.extension?._isHidden)) {
           let appId = c._appwell.app.get_id() ?? '';
           let isFavorite = AppFavorites.getAppFavorites().isFavorite(appId);
-          console.log("[CupertinoDockLite] Clone created for app:", appId, "isFavorite:", isFavorite);
-          if (!isFavorite) {
-            console.log("[CupertinoDockLite] Setting _introJump = 1.0 for app:", appId);
+          let isLocationApp = !!c._appwell.app.location;
+          if (!isFavorite && !isLocationApp) {
             uiIcon._introJump = 1.0;
           }
         }
@@ -331,11 +322,11 @@ export class Animator {
       }
 
       if (icon._introJump > 0) {
-        console.log("[CupertinoDockLite] Decrementing _introJump for app:", icon._appwell?.app?.get_id(), "current:", icon._introJump);
+        console.debug("[CupertinoDockLite] Decrementing _introJump for app:", icon._appwell?.app?.get_id(), "current:", icon._introJump);
         icon._introJump -= 0.03 * (this.extension.jump_speed || 1.0);
         if (icon._introJump <= 0) {
           icon._introJump = 0;
-          console.log("[CupertinoDockLite] _introJump finished for app:", icon._appwell?.app?.get_id());
+          console.debug("[CupertinoDockLite] _introJump finished for app:", icon._appwell?.app?.get_id());
         }
         didAnimate = true;
       }
@@ -412,7 +403,7 @@ export class Animator {
           let drop_p = (p - scale_duration) / (1.0 - scale_duration);
           off = Math.cos(drop_p * Math.PI / 2) * iconSize * ANIM_INTRO_HEIGHT * scaleFactor;
         }
-        console.log("[CupertinoDockLite] introJump position off:", off, "scale:", scale);
+        console.debug("[CupertinoDockLite] introJump position off:", off, "scale:", scale);
         if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
       } else if (urgentBounceEnabled && icon._attentionJump > 0) {
         let jh = this.extension.jump_height || 0.85;
@@ -504,114 +495,101 @@ export class Animator {
   }
 
   _connectDraggableHooks(draggable) {
-    if (!draggable || this._draggableHooks.some(hook => hook.draggable === draggable)) return;
+    if (!draggable || this._draggableHooks.some(d => d === draggable)) return;
 
-    const hook = { draggable, dragBeginId: 0, dragEndId: 0 };
-    hook.dragBeginId = draggable.connect('drag-begin', () => {
-      this._dragging = true;
-      this.disable(true);
-    });
-    hook.dragEndId = draggable.connect('drag-end', () => {
-      this._dragging = false;
-      this._disconnectDraggableHook(hook);
-      if (this.extension?.running) {
-        this._oneShotId = setTimeout(() => {
-          this._oneShotId = null;
-          if (!this.extension?.running) return;
-          this.enable();
-          this.extension._iconsDirty = true;
-          this._startAnimation();
-        }, ANIM_REENABLE_DELAY);
-      }
-    });
-    this._draggableHooks.push(hook);
+    draggable.connectObject(
+      'drag-begin', () => {
+        this._dragging = true;
+        this.disable(true);
+      },
+      'drag-end', () => {
+        this._dragging = false;
+        if (draggable) {
+          draggable.disconnectObject(this._iconsContainer);
+        }
+        this._draggableHooks = this._draggableHooks.filter(d => d !== draggable);
+        if (this.extension?.running) {
+          this._oneShotId = setTimeout(() => {
+            this._oneShotId = null;
+            if (!this.extension?.running) return;
+            this.enable();
+            this.extension._iconsDirty = true;
+            this._startAnimation();
+          }, ANIM_REENABLE_DELAY);
+        }
+      },
+      this._iconsContainer
+    );
+    this._draggableHooks.push(draggable);
   }
 
-  _disconnectDraggableHook(hook) {
-    if (!hook?.draggable) return;
-
-    if (hook.dragBeginId) {
-      hook.draggable.disconnect(hook.dragBeginId);
-      hook.dragBeginId = 0;
+  _disconnectDraggableHook(draggable) {
+    if (draggable && this._iconsContainer) {
+      draggable.disconnectObject(this._iconsContainer);
     }
-    if (hook.dragEndId) {
-      hook.draggable.disconnect(hook.dragEndId);
-      hook.dragEndId = 0;
-    }
-
-    this._draggableHooks = this._draggableHooks.filter(item => item !== hook);
   }
 
   _disconnectDraggableHooks() {
-    [...this._draggableHooks].forEach(hook => this._disconnectDraggableHook(hook));
+    this._draggableHooks.forEach(draggable => this._disconnectDraggableHook(draggable));
     this._draggableHooks = [];
   }
 
   _logLifecycleError(action, error) {
-    log(`[cupertinisator] ${action} failed: ${error.message}`);
+    console.error(`[cupertinisator] ${action} failed: ${error.message}`);
   }
 
   _getD2dBadgeBin(appwell) {
-    try {
-      const container = appwell?._iconContainer;
-      if (!container) return null;
-      if (container._notificationBadgeBin) return container._notificationBadgeBin;
+    const container = appwell?._iconContainer;
+    if (!container) return null;
+    if (container._notificationBadgeBin) return container._notificationBadgeBin;
 
-      const badgeBin = container.get_children?.().find(child =>
-        child.get_children?.()?.some?.(c => c.has_style_class_name?.('notification-badge'))
-      ) ?? null;
-      if (badgeBin) {
-        container._notificationBadgeBin = badgeBin;
-      }
-      return badgeBin;
-    } catch (e) {
-      return null;
+    const children = typeof container.get_children === 'function' ? container.get_children() : [];
+    const badgeBin = children.find(child => {
+      const grandChildren = typeof child.get_children === 'function' ? child.get_children() : [];
+      return grandChildren.some(c => typeof c.has_style_class_name === 'function' && c.has_style_class_name('notification-badge'));
+    }) ?? null;
+
+    if (badgeBin) {
+      container._notificationBadgeBin = badgeBin;
     }
+    return badgeBin;
   }
 
   _setD2dBadgeOpacity(appwell, opacity) {
-    try {
-      const badgeBin = this._getD2dBadgeBin(appwell);
-      if (badgeBin) {
-        if (opacity === 0) {
-          badgeBin.translation_x = -9999;
-        } else {
-          badgeBin.translation_x = 0;
-          badgeBin.opacity = 255;
-        }
+    const badgeBin = this._getD2dBadgeBin(appwell);
+    if (badgeBin) {
+      if (opacity === 0) {
+        badgeBin.translation_x = -9999;
+      } else {
+        badgeBin.translation_x = 0;
+        badgeBin.opacity = 255;
       }
-    } catch (e) { }
-  }
-
-  _getD2dBadgeCount(appwell) {
-    try {
-      const badgeBin = this._getD2dBadgeBin(appwell);
-      if (!badgeBin) return 0;
-
-      const text = this._findBadgeText(badgeBin);
-      if (text.includes('+')) return 100;
-
-      const count = Number.parseInt(text, 10);
-      if (Number.isFinite(count) && count > 0) return count;
-
-      return badgeBin.visible ? 1 : 0;
-    } catch (e) {
-      return 0;
     }
   }
 
+  _getD2dBadgeCount(appwell) {
+    const badgeBin = this._getD2dBadgeBin(appwell);
+    if (!badgeBin) return 0;
+
+    const text = this._findBadgeText(badgeBin);
+    if (text.includes('+')) return 100;
+
+    const count = Number.parseInt(text, 10);
+    if (Number.isFinite(count) && count > 0) return count;
+
+    return badgeBin.visible ? 1 : 0;
+  }
+
   _findBadgeText(actor) {
-    try {
-      const text = actor.get_text?.();
-      if (text) return text;
+    if (!actor) return '';
+    const text = typeof actor.get_text === 'function' ? actor.get_text() : '';
+    if (text) return text;
 
-      const children = actor.get_children?.() ?? [];
-      for (let i = 0; i < children.length; i++) {
-        const childText = this._findBadgeText(children[i]);
-        if (childText) return childText;
-      }
-    } catch (e) { }
-
+    const children = typeof actor.get_children === 'function' ? actor.get_children() : [];
+    for (const child of children) {
+      const childText = this._findBadgeText(child);
+      if (childText) return childText;
+    }
     return '';
   }
 }
