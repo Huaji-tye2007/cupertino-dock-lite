@@ -540,11 +540,12 @@ export default class DashAnimatorExtension extends Extension {
           themeContext.emit('changed');
           if (this.animator) this.animator.reloadIcons();
 
-          // Slide back in after theme is applied
+          // Slide back in after theme is applied — use wrapper so _pendingHide
+          // is cleared and urgent bounce resumes if still active.
           this._themeInTimeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 50, () => {
             this._themeInTimeoutId = null;
-            if (this.dashContainer && this.dashContainer.__animateIn)
-              this.dashContainer.__animateIn(0.2, 0);
+            if (this.dashContainer && this.dashContainer._animateIn)
+              this.dashContainer._animateIn(0.2, 0);
             return GLib.SOURCE_REMOVE;
           });
         };

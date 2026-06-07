@@ -68,11 +68,18 @@ export class Animator {
 
   reloadIcons() {
     if (!this._iconsContainer) return;
+    // Restore native icon opacity before destroying clones — the animation
+    // loop may have zeroed them and _endAnimation won't run during a reload.
     this._iconsContainer.get_children().forEach(c => {
+      if (c._bin?.first_child) c._bin.first_child.opacity = 255;
+      this._setD2dBadgeOpacity(c._appwell, 255);
       this._disconnectAppwellHooks(c._appwell);
       c.destroy();
     });
     this._iconsCount = 0;
+    // Suppress intro bounce on reload — icons are already known, this is
+    // a rebuild (e.g. theme change), not a genuine first appearance.
+    this._suppressIntro = true;
     this._startAnimation();
   }
 
@@ -219,7 +226,7 @@ export class Animator {
           );
         }
 
-        if (this._initialized && c._appwell?.app && !(this.extension?._isHidden)) {
+        if (this._initialized && !this._suppressIntro && c._appwell?.app && !(this.extension?._isHidden)) {
           let appId = c._appwell.app.get_id() ?? '';
           let isFavorite = AppFavorites.getAppFavorites().isFavorite(appId);
           let isLocationApp = !!c._appwell.app.location;
@@ -232,6 +239,9 @@ export class Animator {
         this._connectDraggableHooks(c._draggable);
       }
     });
+
+    // Clear after creation pass — suppression covers this tick only.
+    this._suppressIntro = false;
 
     animateIcons.forEach((c) => {
       let orphan = true;
