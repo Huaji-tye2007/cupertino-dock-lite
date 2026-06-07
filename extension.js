@@ -33,13 +33,6 @@ export default class DashAnimatorExtension extends Extension {
     this._applySettings();
     this._settings.connectObject('changed', () => this._applySettings(), this);
 
-    this._doEnable();
-  }
-
-  _doEnable() {
-    if (this.running) return;
-    this.running = true;
-
     this.animator = new Animator();
     this.animator.extension = this;
 
@@ -72,10 +65,7 @@ export default class DashAnimatorExtension extends Extension {
     this._connectThemeSettings();
   }
 
-  _doDisable() {
-    if (!this.running) return;
-    this.running = false;
-
+  disable() {
     this._disconnectThemeSettings();
     if (this.animator) this.animator.disable();
 
@@ -119,6 +109,11 @@ export default class DashAnimatorExtension extends Extension {
 
     this.dashContainer = null;
     this.animator = null;
+
+    if (this._settings) {
+      this._settings.disconnectObject(this);
+      this._settings = null;
+    }
   }
 
   _disconnectIconEvents() {
@@ -147,15 +142,6 @@ export default class DashAnimatorExtension extends Extension {
   _disconnectDashContainerEvents() {
     if (this.dashContainer) {
       this.dashContainer.disconnectObject(this);
-    }
-  }
-
-  disable() {
-    this._doDisable();
-
-    if (this._settings) {
-      this._settings.disconnectObject(this);
-      this._settings = null;
     }
   }
 
@@ -224,7 +210,7 @@ export default class DashAnimatorExtension extends Extension {
       this._disconnectDashEvents();
       this._disconnectIconEvents();
       this.dash = null;
-      if (!this.running || !this.animator) return;
+      if (!this.animator) return;
       this.animator.disable();
       this.animator.dashContainer = null;
       this.animator.enable();
@@ -540,7 +526,7 @@ export default class DashAnimatorExtension extends Extension {
         const applyThemeNow = () => {
           this._removeThemeOverride();
 
-          if (!this.running) return;
+          if (!this.animator) return;
 
           const themeContext = St.ThemeContext.get_for_stage(global.stage);
           const stTheme = themeContext.get_theme();
