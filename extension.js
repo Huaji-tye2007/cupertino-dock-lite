@@ -74,18 +74,12 @@ export default class DashAnimatorExtension extends Extension {
       this._findDashIntervalId = null;
     }
 
-    if (this._intervals) {
-      this._intervals.forEach(id => clearInterval(id));
-      this._intervals = [];
-    }
     if (this._oneShotId) {
-      clearInterval(this._oneShotId);
+      clearTimeout(this._oneShotId);
       this._oneShotId = null;
     }
-    if (this._jumpHideTimer) {
-      clearInterval(this._jumpHideTimer);
-      this._jumpHideTimer = null;
-    }
+
+    this._pendingHide = null;
 
     this._disconnectIconEvents();
 
@@ -228,42 +222,32 @@ export default class DashAnimatorExtension extends Extension {
     this.dashContainer.__animateOut = this.dashContainer._animateOut;
 
     this.dashContainer._animateIn = (time, delay) => {
-      if (this._jumpHideTimer) {
-        clearInterval(this._jumpHideTimer);
-        this._jumpHideTimer = null;
-      }
+      // Cancel any pending deferred hide — user showed the dock again
+      this._pendingHide = null;
       this._isHidden = false;
-      this._pendingHideForUrgentBounce = false;
+      // Resume urgent bounce if the matter is still unattended
       if (this.animator) this.animator.resumeUrgentBounce();
       this._startAnimation();
       this.dashContainer.__animateIn(time, delay);
     };
     this.dashContainer._animateOut = (time, delay) => {
-      if (this.animator && this.animator.isJumping()) {
-        this._pendingHideForUrgentBounce = true;
+      // If any bounce is in progress (click or urgent), defer the hide:
+      // store args, keep dock visible, let the current arc finish landing.
+      // The animator will call _firePendingHide() once all jumps settle.
+      // The 3-cycle first-run gate for urgent is enforced inside the animator loop.
+      const anyJumping = this.animator?.isJumping();
+      const anyFirstRunPending = this._iconsContainer_firstRunPending();
+      if (anyJumping || anyFirstRunPending) {
+        this._pendingHide = { time, delay };
         this.dashContainer.__animateIn(0.2, 0);
-        if (this._jumpHideTimer) clearInterval(this._jumpHideTimer);
-        this._jumpHideTimer = setInterval(() => {
-          if (!this.animator.isJumping()) {
-            clearInterval(this._jumpHideTimer);
-            this._jumpHideTimer = null;
-            if (!this._isHidden) {
-              this._isHidden = true;
-              this._pendingHideForUrgentBounce = false;
-              if (this.animator) this.animator.pauseUrgentBounce();
-              this.dashContainer.__animateOut(time, delay);
-            }
-          }
-        }, 100);
         return;
       }
       this._isHidden = true;
-      this._pendingHideForUrgentBounce = false;
-      if (this.animator) this.animator.pauseUrgentBounce();
+      this._pendingHide = null;
       this.dashContainer.__animateOut(time, delay);
     };
 
-    this.animator._animate();
+    this._startAnimation();
     return true;
   }
 
@@ -478,6 +462,26 @@ export default class DashAnimatorExtension extends Extension {
   _startAnimation() {
     if (this.animator)
       this.animator._startAnimation();
+  }
+
+  // Returns true if any urgent icon still has first-run bounce cycles remaining.
+  // Used by _animateOut to decide whether to defer the hide.
+  _iconsContainer_firstRunPending() {
+    if (!this.animator?._iconsContainer) return false;
+    return this.animator._iconsContainer.get_children()
+      .filter(c => c.name !== 'cupertinisator-badge')
+      .some(c => (c._appwell?._dashAnimatorUrgentFirstRunRemaining ?? 0) > 0);
+  }
+
+  // Called by the animator when the last first-run cycle completes,
+  // fires the deferred hide that was waiting for it.
+  _firePendingHide() {
+    if (!this._pendingHide) return;
+    const { time, delay } = this._pendingHide;
+    this._pendingHide = null;
+    this._isHidden = true;
+    if (this.dashContainer?.__animateOut)
+      this.dashContainer.__animateOut(time, delay);
   }
   // ── Theme injection ──────────────────────────────────────────────────────
 

@@ -86,30 +86,12 @@ export class Animator {
 
   isJumping() {
     if (!this._iconsContainer) return false;
-    let icons = this._iconsContainer.get_children().filter(c => c.name !== 'cupertinisator-badge');
-    return icons.some(i =>
-      (i._clickJump > 0) ||
-      (i._attentionJump > 0) ||
-      (this.extension?.urgent_bounce && i._appwell?._dashAnimatorUrgentFirstRunRemaining > 0) ||
-      (this.extension?.urgent_bounce && !(this.extension?._isHidden) && !(this.extension?._pendingHideForUrgentBounce) && i._appwell?.urgent && (i._attentionCooldown > 0))
-    );
+    const icons = this._iconsContainer.get_children().filter(c => c.name !== 'cupertinisator-badge');
+    // NOTE: _introJump intentionally excluded — intro is cosmetic and
+    // should not influence dock visibility state machines.
+    return icons.some(i => (i._clickJump > 0) || (i._attentionJump > 0));
   }
 
-  pauseUrgentBounce() {
-    if (!this._iconsContainer) return;
-    this._iconsContainer.get_children().forEach(icon => {
-      if (!icon._appwell?.urgent) return;
-      icon._appwell._dashAnimatorUrgentBounceActive = true;
-      icon._attentionJump = 0;
-      icon._attentionCooldown = 0;
-      if (!(icon._clickJump > 0)) {
-        if (icon._bin?.first_child) icon._bin.first_child.opacity = 255;
-        this._setD2dBadgeOpacity(icon._appwell, 255);
-        if (icon._badge) icon._badge.visible = false;
-        icon.opacity = 0;
-      }
-    });
-  }
 
   resumeUrgentBounce() {
     if (!this._iconsContainer || this.extension?.urgent_bounce === false) return;
@@ -291,9 +273,12 @@ export class Animator {
       }
     });
 
+    const isHidden = this.extension?._isHidden === true;
+
     let didAnimate = false;
     animateIcons.forEach((icon) => {
-      if (this.extension?._isHidden) {
+      // Intro never plays while dock is hidden — kill immediately
+      if (isHidden) {
         icon._introJump = 0;
       }
 
@@ -307,12 +292,11 @@ export class Animator {
       if (icon._clickJump > 0) {
         icon._clickJump -= 0.0275 * (this.extension.jump_speed || 1.0);
         if (icon._clickJump <= 0) {
-          const app = icon._appwell?.app;
-          const appId = app?.get_id() ?? '';
-          const isChromium = appId.includes('chromium') || appId.includes('chrome') ||
-            appId.includes('brave') || appId.includes('microsoft-edge') ||
-            appId.includes('opera');
-          if (!isChromium && app?.get_state() === Shell.AppState.STARTING) {
+          // Re-arm only when dock is visible and no hide is pending.
+          // If hide was requested mid-loop, let this arc finish landing then stop —
+          // _endAnimation will fire _firePendingHide once everything settles.
+          const pendingHide = !!this.extension?._pendingHide;
+          if (!isHidden && !pendingHide && icon._appwell?.app?.get_state() === Shell.AppState.STARTING) {
             icon._clickJump = 1.0;
           } else {
             icon._clickJump = 0;
@@ -340,19 +324,35 @@ export class Animator {
         icon._attentionJump -= 0.0275 * (this.extension.jump_speed || 1.0);
         if (icon._attentionJump <= 0) {
           icon._attentionJump = 0;
-          if (icon._appwell?._dashAnimatorUrgentFirstRunRemaining > 0) {
-            icon._appwell._dashAnimatorUrgentFirstRunRemaining--;
+          if (!isHidden) {
+            // Only schedule next bounce cycle when dock is visible
+            if (icon._appwell?._dashAnimatorUrgentFirstRunRemaining > 0) {
+              icon._appwell._dashAnimatorUrgentFirstRunRemaining--;
+            }
+            if (icon._appwell?.urgent && icon._appwell._dashAnimatorUrgentBounceActive !== false) {
+              icon._attentionCooldown = Math.round(1000 / this.animationInterval);
+            }
           }
-          if (icon._appwell?.urgent && icon._appwell._dashAnimatorUrgentBounceActive !== false) {
-            icon._attentionCooldown = Math.round(1000 / this.animationInterval);
+          // If a hide was deferred waiting for first-run cycles to finish,
+          // check now whether all icons have cleared their first-run quota.
+          if (this.extension?._pendingHide) {
+            const anyFirstRunPending = this._iconsContainer?.get_children()
+              .filter(c => c.name !== 'cupertinisator-badge')
+              .some(c => (c._appwell?._dashAnimatorUrgentFirstRunRemaining ?? 0) > 0);
+            if (!anyFirstRunPending) {
+              this.extension._firePendingHide();
+            }
           }
         }
         didAnimate = true;
-      } else if (urgentBounceEnabled && !(this.extension?._isHidden) && icon._appwell?.urgent && icon._appwell._dashAnimatorUrgentBounceActive !== false) {
+      } else if (urgentBounceEnabled && !isHidden && !this.extension?._pendingHide && icon._appwell?.urgent && icon._appwell._dashAnimatorUrgentBounceActive !== false) {
+        // New bounce cycles only fire when dock is visible and no hide is pending.
+        // If hide was requested, current arc drains to zero, then _endAnimation
+        // fires _firePendingHide — icon settles before dock slides.
         if (icon._attentionCooldown > 0) {
           icon._attentionCooldown--;
           didAnimate = true;
-        } else if (!this.extension?._pendingHideForUrgentBounce || icon._appwell._dashAnimatorUrgentFirstRunRemaining > 0) {
+        } else {
           icon._attentionJump = 1.0;
           didAnimate = true;
         }
@@ -443,6 +443,10 @@ export class Animator {
     if (this._intervalId) { clearInterval(this._intervalId); this._intervalId = null; }
     this._relayout = 0;
     this._restoreCloneHandoffs();
+    // All bounces have settled — if a hide was waiting for this moment, fire it now.
+    if (this.extension?._pendingHide) {
+      this.extension._firePendingHide();
+    }
   }
 
   _restoreCloneHandoffs() {
