@@ -322,11 +322,9 @@ export class Animator {
       }
 
       if (icon._introJump > 0) {
-        console.debug("[CupertinoDockLite] Decrementing _introJump for app:", icon._appwell?.app?.get_id(), "current:", icon._introJump);
         icon._introJump -= 0.03 * (this.extension.jump_speed || 1.0);
         if (icon._introJump <= 0) {
           icon._introJump = 0;
-          console.debug("[CupertinoDockLite] _introJump finished for app:", icon._appwell?.app?.get_id());
         }
         didAnimate = true;
       }
@@ -403,7 +401,6 @@ export class Animator {
           let drop_p = (p - scale_duration) / (1.0 - scale_duration);
           off = Math.cos(drop_p * Math.PI / 2) * iconSize * ANIM_INTRO_HEIGHT * scaleFactor;
         }
-        console.debug("[CupertinoDockLite] introJump position off:", off, "scale:", scale);
         if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
       } else if (urgentBounceEnabled && icon._attentionJump > 0) {
         let jh = this.extension.jump_height || 0.85;
@@ -532,10 +529,6 @@ export class Animator {
   _disconnectDraggableHooks() {
     this._draggableHooks.forEach(draggable => this._disconnectDraggableHook(draggable));
     this._draggableHooks = [];
-  }
-
-  _logLifecycleError(action, error) {
-    console.error(`[cupertinisator] ${action} failed: ${error.message}`);
   }
 
   _getD2dBadgeBin(appwell) {

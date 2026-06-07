@@ -33,9 +33,6 @@ export default class DashAnimatorExtension extends Extension {
     this._applySettings();
     this._settings.connectObject('changed', () => this._applySettings(), this);
 
-    this._extensionManager = Main.extensionManager;
-    this._d2dId = 'dash-to-dock@micxgx.gmail.com';
-
     this._doEnable();
   }
 
@@ -498,12 +495,6 @@ export default class DashAnimatorExtension extends Extension {
   }
   // ── Theme injection ──────────────────────────────────────────────────────
 
-  _getD2DSettings() {
-    const d2dExt = this._extensionManager.lookup(this._d2dId);
-    if (!d2dExt || d2dExt.state !== 1) return null;
-    return d2dExt.stateObj?.dockManager?.settings ?? null;
-  }
-
   _applyThemeOverride() {
     if (this._themeApplyTimeoutId) {
       GLib.source_remove(this._themeApplyTimeoutId);
@@ -543,7 +534,6 @@ export default class DashAnimatorExtension extends Extension {
         try {
           file.query_info_finish(res);
         } catch (e) {
-          console.error(`[cupertinisator] theme file not found: ${fileName}`);
           return;
         }
 
