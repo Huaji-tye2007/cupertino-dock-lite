@@ -13,7 +13,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         } catch (e) { return null; }
     }
 
-    _buildComboRowString(settings, signals, key, title, subtitle, options) {
+    _buildComboRowString(settings, target, key, title, subtitle, options) {
         const model = new Gtk.StringList();
         for (const opt of options) {
             model.append(opt.label);
@@ -35,15 +35,14 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         syncFromSettings();
 
-        row.connect('notify::selected', () => {
+        row.connectObject('notify::selected', () => {
             const val = options[row.selected]?.value;
             if (val && settings.get_string(key) !== val) {
                 settings.set_string(key, val);
             }
-        });
+        }, target);
 
-        const sigId = settings.connect(`changed::${key}`, syncFromSettings);
-        signals.push(sigId);
+        settings.connectObject(`changed::${key}`, syncFromSettings, target);
 
         return row;
     }
@@ -51,8 +50,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
     fillPreferencesWindow(window) {
         window.set_default_size(700, 800);
 
-        const settings = this.getSettings('org.gnome.shell.extensions.cupertino-dock-lite');
-        const settingsSignalIds = [];
+        const settings = this.getSettings();
 
         // ── Home page ────────────────────────────────────────────────────────
         const homePage = new Adw.PreferencesPage({
@@ -322,7 +320,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         const themeRow = this._buildComboRowString(
             settings,
-            settingsSignalIds,
+            window,
             'dock-theme',
             'Dock Style',
             'Mojave sits flush at the screen edge, 10px border radius · Big Sur floats above it, 22px border radius',
@@ -345,7 +343,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         const colorRow = this._buildComboRowString(
             settings,
-            settingsSignalIds,
+            window,
             'dock-color-scheme',
             'Color Scheme',
             'Manual override when Follow System Theme is off',
@@ -358,8 +356,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         const updateColorSensitivity = () => { colorRow.sensitive = !settings.get_boolean('theme-aware'); };
         updateColorSensitivity();
-        const colorSensSig = settings.connect('changed::theme-aware', updateColorSensitivity);
-        settingsSignalIds.push(colorSensSig);
+        settings.connectObject('changed::theme-aware', updateColorSensitivity, window);
 
         const updateThemeSensitivity = () => {
             const on = settings.get_boolean('override-theming');
@@ -367,8 +364,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             colorGroup.sensitive = on;
         };
         updateThemeSensitivity();
-        const themeSensSig = settings.connect('changed::override-theming', updateThemeSensitivity);
-        settingsSignalIds.push(themeSensSig);
+        settings.connectObject('changed::override-theming', updateThemeSensitivity, window);
 
         window.add(themePage);
 
@@ -477,10 +473,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         });
 
         window.connect('destroy', () => {
-            for (const id of settingsSignalIds) {
-                settings.disconnect(id);
-            }
-            settingsSignalIds.length = 0;
+            settings.disconnectObject(window);
         });
 
         window.add(miscPage);

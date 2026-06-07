@@ -1,5 +1,6 @@
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import { BadgeManager } from './badge.js';
+import * as AppFavorites from 'resource:///org/gnome/shell/ui/appFavorites.js';
 import St from 'gi://St';
 import Graphene from 'gi://Graphene';
 import Shell from 'gi://Shell';
@@ -13,6 +14,9 @@ const ANIM_INTERVAL_PAD = 15;
 const ANIM_ICON_QUALITY = 2.0;
 const ANIM_REENABLE_DELAY = 750;
 const ANIM_ICON_RAISE = 0.75;
+const ANIM_INTRO_HEIGHT = 0.6; // Initial height multiplier (1.10 = 110% of icon size)
+const ANIM_INTRO_SCALE_DURATION = 0.5; // Proportion of timeline spent scaling up (0.3 = 30%)
+const ANIM_INTRO_FADE_DURATION = 0.75; // Proportion of timeline spent fading in
 
 // const DOT_CANVAS_SIZE = 96;
 
@@ -26,6 +30,7 @@ export class Animator {
 
   enable() {
     if (this._enabled) return;
+    this._initialized = false;
     this._iconsContainer = new St.Widget({
       name: 'iconsContainer',
       reactive: false,
@@ -109,7 +114,7 @@ export class Animator {
         if (icon._bin?.first_child) icon._bin.first_child.opacity = 255;
         this._setD2dBadgeOpacity(icon._appwell, 255);
         if (icon._badge) icon._badge.visible = false;
-        icon.visible = false;
+        icon.opacity = 0;
       }
     });
   }
@@ -201,9 +206,10 @@ export class Animator {
         if (animateIcons[i]._bin == bin) { found = true; break; }
       }
       if (!found) {
-        let uiIcon = new St.Widget({ name: 'icon', width: iconSize, height: iconSize, visible: false });
+        let uiIcon = new St.Widget({ name: 'icon', width: iconSize, height: iconSize, visible: true, opacity: 0 });
         uiIcon.pivot_point = pivot; uiIcon._bin = bin; uiIcon._appwell = c._appwell; uiIcon._label = c._label;
         uiIcon._wasActive = false;
+        uiIcon._introJump = 0;
 
         if (bin.first_child) {
           let img = new St.Icon({ name: 'icon', icon_name: bin.first_child.icon_name || null, gicon: bin.first_child.gicon || null });
@@ -214,17 +220,39 @@ export class Animator {
 
         if (uiIcon._appwell && !uiIcon._appwell._dashAnimatorHooked) {
           uiIcon._appwell._dashAnimatorHooked = true;
-          uiIcon._appwell._dashAnimatorClickedId = uiIcon._appwell.connect('clicked', () => {
-            if (uiIcon._appwell.app && uiIcon._appwell.app.get_n_windows() === 0) { uiIcon._clickJump = 1.0; this._startAnimation(); if (this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0); }
-          });
-          uiIcon._appwell._dashAnimatorUrgentId = uiIcon._appwell.connect('notify::urgent', () => {
-            if (uiIcon._appwell.urgent) {
-              this.requestUrgentBounce(uiIcon._appwell, true);
-              if (this.extension?.urgent_bounce && this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0);
-            } else {
-              this.clearUrgentBounce(uiIcon._appwell);
-            }
-          });
+          uiIcon._appwell.connectObject(
+            'clicked',
+            () => {
+              if (uiIcon._appwell.app && uiIcon._appwell.app.get_n_windows() === 0) {
+                uiIcon._clickJump = 1.0;
+                this._startAnimation();
+                if (this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0);
+              }
+            },
+            this._iconsContainer
+          );
+          uiIcon._appwell.connectObject(
+            'notify::urgent',
+            () => {
+              if (uiIcon._appwell.urgent) {
+                this.requestUrgentBounce(uiIcon._appwell, true);
+                if (this.extension?.urgent_bounce && this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0);
+              } else {
+                this.clearUrgentBounce(uiIcon._appwell);
+              }
+            },
+            this._iconsContainer
+          );
+        }
+
+        if (this._initialized && c._appwell?.app && !(this.extension?._isHidden)) {
+          let appId = c._appwell.app.get_id() ?? '';
+          let isFavorite = AppFavorites.getAppFavorites().isFavorite(appId);
+          console.log("[CupertinoDockLite] Clone created for app:", appId, "isFavorite:", isFavorite);
+          if (!isFavorite) {
+            console.log("[CupertinoDockLite] Setting _introJump = 1.0 for app:", appId);
+            uiIcon._introJump = 1.0;
+          }
         }
 
         this._iconsContainer.add_child(uiIcon);
@@ -236,7 +264,6 @@ export class Animator {
       let orphan = true;
       for (let i = 0; i < icons.length; i++) { if (icons[i]._bin == c._bin) { orphan = false; break; } }
       if (orphan) {
-        this._disconnectAppwellHooks(c._appwell);
         this._iconsContainer.remove_child(c);
       }
     });
@@ -275,14 +302,25 @@ export class Animator {
 
     let didAnimate = false;
     animateIcons.forEach((icon) => {
+      if (this.extension?._isHidden) {
+        icon._introJump = 0;
+      }
+
+      if (!icon._bin.width || !icon._bin.height) {
+        if (icon._introJump > 0) {
+          didAnimate = true;
+        }
+        return;
+      }
+
       if (icon._clickJump > 0) {
         icon._clickJump -= 0.0275 * (this.extension.jump_speed || 1.0);
         if (icon._clickJump <= 0) {
           const app = icon._appwell?.app;
           const appId = app?.get_id() ?? '';
           const isChromium = appId.includes('chromium') || appId.includes('chrome') ||
-                             appId.includes('brave') || appId.includes('microsoft-edge') ||
-                             appId.includes('opera');
+            appId.includes('brave') || appId.includes('microsoft-edge') ||
+            appId.includes('opera');
           if (!isChromium && app?.get_state() === Shell.AppState.STARTING) {
             icon._clickJump = 1.0;
           } else {
@@ -291,6 +329,17 @@ export class Animator {
         }
         didAnimate = true;
       }
+
+      if (icon._introJump > 0) {
+        console.log("[CupertinoDockLite] Decrementing _introJump for app:", icon._appwell?.app?.get_id(), "current:", icon._introJump);
+        icon._introJump -= 0.03 * (this.extension.jump_speed || 1.0);
+        if (icon._introJump <= 0) {
+          icon._introJump = 0;
+          console.log("[CupertinoDockLite] _introJump finished for app:", icon._appwell?.app?.get_id());
+        }
+        didAnimate = true;
+      }
+
       const urgentBounceEnabled = this.extension?.urgent_bounce !== false;
       if (!urgentBounceEnabled) {
         if (icon._appwell) icon._appwell._dashAnimatorUrgentBounceActive = false;
@@ -320,7 +369,7 @@ export class Animator {
         }
       }
 
-      const isJumping = (icon._clickJump > 0 || icon._attentionJump > 0);
+      const isJumping = (icon._clickJump > 0 || icon._introJump > 0 || icon._attentionJump > 0);
       const forceClone = icon._forceClone === true;
       const cloneActive = isJumping || forceClone;
 
@@ -328,7 +377,7 @@ export class Animator {
         if (icon._wasActive) {
           if (icon._bin.first_child) icon._bin.first_child.opacity = 255;
           this._setD2dBadgeOpacity(icon._appwell, 255);
-          icon.visible = false;
+          icon.opacity = 0;
           icon._wasActive = false;
         }
         return;
@@ -339,9 +388,31 @@ export class Animator {
 
       let pos = this._get_position(icon._bin);
       let jX = 0, jY = 0;
+      let scale = 1.0;
+      let opacity = 255;
+
       if (icon._clickJump > 0) {
         let jh = this.extension.jump_height || 0.85;
         let off = Math.sin(icon._clickJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * jh;
+        if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
+      } else if (icon._introJump > 0) {
+        let t = icon._introJump;
+        let p = 1.0 - t;
+        let scale_duration = ANIM_INTRO_SCALE_DURATION;
+        let fade_duration = ANIM_INTRO_FADE_DURATION;
+        let off = 0;
+        opacity = fade_duration > 0
+          ? Math.min(255, Math.round((p / fade_duration) * 255))
+          : 255;
+        if (p <= scale_duration) {
+          scale = p / scale_duration;
+          off = iconSize * ANIM_INTRO_HEIGHT * scaleFactor;
+        } else {
+          scale = 1.0;
+          let drop_p = (p - scale_duration) / (1.0 - scale_duration);
+          off = Math.cos(drop_p * Math.PI / 2) * iconSize * ANIM_INTRO_HEIGHT * scaleFactor;
+        }
+        console.log("[CupertinoDockLite] introJump position off:", off, "scale:", scale);
         if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
       } else if (urgentBounceEnabled && icon._attentionJump > 0) {
         let jh = this.extension.jump_height || 0.85;
@@ -353,11 +424,17 @@ export class Animator {
       this._setD2dBadgeOpacity(icon._appwell, 0);
 
       icon.set_position(Math.round(pos[0] + jX), Math.round(pos[1] + jY));
+      icon.set_scale(scale, scale);
+      icon.opacity = opacity;
+
       if (this._badgeManager) {
         const badgeCount = this._getD2dBadgeCount(icon._appwell);
         this._badgeManager.updateIcon(icon, iconSize, badgeCount, true);
       }
     });
+
+    this._initialized = true;
+
     if (didAnimate)
       this._startAnimation();
     else
@@ -387,7 +464,8 @@ export class Animator {
       if (icon._bin?.first_child) icon._bin.first_child.opacity = 255;
       this._setD2dBadgeOpacity(icon._appwell, 255);
       if (icon._badge) icon._badge.visible = false;
-      icon.visible = false;
+      icon.set_scale(1.0, 1.0);
+      icon.opacity = 0;
     });
   }
 
@@ -421,16 +499,7 @@ export class Animator {
   _disconnectAppwellHooks(appwell) {
     if (!appwell) return;
 
-    if (appwell._dashAnimatorClickedId) {
-      appwell.disconnect(appwell._dashAnimatorClickedId);
-      appwell._dashAnimatorClickedId = null;
-    }
-
-    if (appwell._dashAnimatorUrgentId) {
-      appwell.disconnect(appwell._dashAnimatorUrgentId);
-      appwell._dashAnimatorUrgentId = null;
-    }
-
+    appwell.disconnectObject(this._iconsContainer);
     appwell._dashAnimatorHooked = false;
   }
 

@@ -322,8 +322,8 @@ export default class DashAnimatorExtension extends Extension {
     this._iconsDirty = true;
     this.dashEvents = [];
     this.dashEvents.push(
-      { actor: this.dash._box, id: this.dash._box.connect('child-added', () => { this._iconsDirty = true; }) },
-      { actor: this.dash._box, id: this.dash._box.connect('child-removed', () => { this._iconsDirty = true; }) },
+      { actor: this.dash._box, id: this.dash._box.connect('child-added', () => { this._iconsDirty = true; this._startAnimation(); }) },
+      { actor: this.dash._box, id: this.dash._box.connect('child-removed', () => { this._iconsDirty = true; this._startAnimation(); }) },
       {
         actor: this.dash, id: this.dash.connect('icon-size-changed', () => {
           this._iconsDirty = true;
