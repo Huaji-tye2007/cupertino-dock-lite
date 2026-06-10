@@ -225,7 +225,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         // ── Dock theme group ──────────────────────────────────────────────────
         const themeGroup = new Adw.PreferencesGroup({
             title: 'Dock Theme',
-            description: 'Override Dash to Dock styling with macOS-inspired themes. Forces "Shrink the Dock" to always be enabled when this is active, and does not support "Panel Mode: Extend to Screen Edges".',
+            description: 'Override Dash to Dock styling with macOS-inspired themes. Note that toggling "Shrink the Dock" off may not work as expected when this theming is active.',
         });
         configPage.add(themeGroup);
 
