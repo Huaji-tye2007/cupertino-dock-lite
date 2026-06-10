@@ -1,16 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <schemalist gettext-domain="cupertino-dock-lite">
   <schema id="org.gnome.shell.extensions.cupertino-dock-lite" path="/org/gnome/shell/extensions/cupertino-dock-lite/">
-    <key name="jump-height" type="d">
-      <default>0.85</default>
-      <summary>Jump Height</summary>
-      <description>How high icons jump when clicked or starting.</description>
-    </key>
-    <key name="jump-speed" type="d">
-      <default>1.0</default>
-      <summary>Jump Speed</summary>
-      <description>The speed of the icon jump animation.</description>
-    </key>
     <key name="urgent-bounce" type="b">
       <default>true</default>
       <summary>Urgent Bounce</summary>

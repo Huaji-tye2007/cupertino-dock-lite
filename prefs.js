@@ -203,77 +203,31 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
 
         window.add(homePage);
 
-        // ── Animation page ────────────────────────────────────────────────────
-        const animPage = new Adw.PreferencesPage({
-            title: 'Animation',
-            icon_name: 'media-playback-start-symbolic',
+        // ── Configuration page ────────────────────────────────────────────────
+        const configPage = new Adw.PreferencesPage({
+            title: 'Configuration',
+            icon_name: 'preferences-system-symbolic',
         });
 
-        const buildScaleRow = (key, title, subtitle, lower, upper, step) => {
-            const row = new Adw.ActionRow({ title, subtitle });
-            const scale = new Gtk.Scale({
-                orientation: Gtk.Orientation.HORIZONTAL,
-                adjustment: new Gtk.Adjustment({ lower, upper, step_increment: step }),
-                digits: 2,
-                draw_value: true,
-                value_pos: Gtk.PositionType.RIGHT,
-                valign: Gtk.Align.CENTER,
-            });
-            scale.set_size_request(200, -1);
-
-            settings.bind(key, scale.adjustment, 'value', 0);
-            row.add_suffix(scale);
-            row.activatable_widget = scale;
-            return row;
-        };
-
-        const jumpGroup = new Adw.PreferencesGroup({
-            title: 'Icon Bounce Animation',
-            description: 'Tweak the bounce effect when apps load or are clicked.',
+        // ── Bounce animation group ────────────────────────────────────────────
+        const bounceGroup = new Adw.PreferencesGroup({
+            title: 'Icon Bounce',
         });
-
-        const resetJumpBtnRow = new Adw.ActionRow({ title: 'Icon Bounce Animation - Reset to defaults' });
-        const resetJumpBtn = new Gtk.Button({
-            icon_name: 'view-refresh-symbolic',
-            tooltip_text: 'Reset bounce settings to defaults',
-            css_classes: ['flat'],
-            valign: Gtk.Align.CENTER,
-        });
-        resetJumpBtn.connect('clicked', () => {
-            settings.set_double('jump-height', 0.6);
-            settings.set_double('jump-speed', 0.7);
-        });
-        resetJumpBtnRow.add_suffix(resetJumpBtn);
-        jumpGroup.add(resetJumpBtnRow);
-
-        animPage.add(jumpGroup);
-
-        const jumpHeightRow = buildScaleRow('jump-height', 'Bounce Height', 'How high the icon bounces', 0.1, 0.8, 0.1);
-        jumpGroup.add(jumpHeightRow);
-
-        const jumpSpeedRow = buildScaleRow('jump-speed', 'Bounce Speed', 'Speed multiplier for the bounce animation', 0.5, 0.8, 0.1);
-        jumpGroup.add(jumpSpeedRow);
 
         const urgentBounceRow = new Adw.SwitchRow({
             title: 'Urgent Bounce',
             subtitle: 'Bounce dock icons when applications request attention. Recommended to turn off "Wiggle Urgent Applications" in Dash to Dock when enabled.',
         });
         settings.bind('urgent-bounce', urgentBounceRow, 'active', 0);
-        jumpGroup.add(urgentBounceRow);
+        bounceGroup.add(urgentBounceRow);
+        configPage.add(bounceGroup);
 
-        window.add(animPage);
-
-        // ── Theme page ────────────────────────────────────────────────────────
-        const themePage = new Adw.PreferencesPage({
-            title: 'Theme',
-            icon_name: 'preferences-desktop-appearance-symbolic',
-        });
-
+        // ── Dock theme group ──────────────────────────────────────────────────
         const themeGroup = new Adw.PreferencesGroup({
             title: 'Dock Theme',
             description: 'Override Dash to Dock styling with macOS-inspired themes. Forces "Shrink the Dock" to always be enabled when this is active, and does not support "Panel Mode: Extend to Screen Edges".',
         });
-        themePage.add(themeGroup);
+        configPage.add(themeGroup);
 
         const overrideRow = new Adw.SwitchRow({
             title: 'Override Theming',
@@ -285,7 +239,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         const themeStyleGroup = new Adw.PreferencesGroup({
             title: 'Style',
         });
-        themePage.add(themeStyleGroup);
+        configPage.add(themeStyleGroup);
 
         const themeRow = this._buildComboRowString(
             settings,
@@ -301,7 +255,7 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
         themeStyleGroup.add(themeRow);
 
         const colorGroup = new Adw.PreferencesGroup({ title: 'Color Scheme' });
-        themePage.add(colorGroup);
+        configPage.add(colorGroup);
 
         const themeAwareRow = new Adw.SwitchRow({
             title: 'Follow System Theme',
@@ -340,6 +294,6 @@ export default class DashAnimatorPreferences extends ExtensionPreferences {
             settings.disconnect(overrideId);
         });
 
-        window.add(themePage);
+        window.add(configPage);
     }
 }

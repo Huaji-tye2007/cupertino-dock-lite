@@ -130,7 +130,7 @@ export class BadgeManager {
 
   _getTransformedSize(actor) {
     if (!actor) return null;
-    const size = typeof actor.get_transformed_size === 'function' ? actor.get_transformed_size() : null;
+    const size = actor.get_transformed_size();
     if (size && size[0] > 0 && size[1] > 0) return size;
 
     const width = actor.width;
@@ -151,10 +151,10 @@ export class BadgeManager {
     if (!container) return null;
     if (container._notificationBadgeBin) return container._notificationBadgeBin;
 
-    const children = typeof container.get_children === 'function' ? container.get_children() : [];
+    const children = container.get_children();
     const badgeBin = children.find(child => {
-      const grandChildren = typeof child.get_children === 'function' ? child.get_children() : [];
-      return grandChildren.some(c => typeof c.has_style_class_name === 'function' && c.has_style_class_name('notification-badge'));
+      const grandChildren = child.get_children();
+      return grandChildren.some(c => c.has_style_class_name('notification-badge'));
     }) ?? null;
 
     if (badgeBin) {
@@ -165,9 +165,9 @@ export class BadgeManager {
 
   _findStyledBadgeActor(actor) {
     if (!actor) return null;
-    if (typeof actor.has_style_class_name === 'function' && actor.has_style_class_name('notification-badge')) return actor;
+    if (actor.has_style_class_name && actor.has_style_class_name('notification-badge')) return actor;
 
-    const children = typeof actor.get_children === 'function' ? actor.get_children() : [];
+    const children = actor.get_children();
     for (const child of children) {
       const found = this._findStyledBadgeActor(child);
       if (found) return found;

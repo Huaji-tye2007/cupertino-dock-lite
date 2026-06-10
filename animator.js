@@ -12,13 +12,16 @@ const ANIM_INTERVAL_PAD = 15;
 const ANIM_ICON_QUALITY = 2.0;
 const ANIM_REENABLE_DELAY = 750;
 const ANIM_ICON_RAISE = 0.75;
-const ANIM_INTRO_HEIGHT = 0.6; // Initial height multiplier (1.10 = 110% of icon size)
-const ANIM_INTRO_SCALE_DURATION = 0.5; // Proportion of timeline spent scaling up (0.3 = 30%)
-const ANIM_INTRO_FADE_DURATION = 0.75; // Proportion of timeline spent fading in
+const ANIM_JUMP_HEIGHT = 0.35;
+const ANIM_JUMP_SPEED = 0.7;
+const ANIM_INTRO_HEIGHT = 0.4;
+const ANIM_INTRO_SCALE_DURATION = 0.525;
+const ANIM_INTRO_FADE_DURATION = 0.725;
 
 export class Animator {
   constructor() {
     this._iconsContainer = null;
+    this._intervalId = null;
     this.animationInterval = ANIM_INTERVAL;
     this._separator = null;
     this._draggableHooks = [];
@@ -38,6 +41,7 @@ export class Animator {
     this._dragging = false;
     this._oneShotId = null;
     this._relayout = 8;
+    this._pivot = new Point();
 
     this._badgeManager = new BadgeManager();
     this._badgeManager.onRebuild = () => {
@@ -46,16 +50,34 @@ export class Animator {
     };
   }
 
-  disable(preserveDragHooks = false) {
+  disable() {
     if (!this._iconsContainer) {
       if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
-      if (!preserveDragHooks) this._disconnectDraggableHooks();
+      this._disconnectDraggableHooks();
       return;
     }
     this._endAnimation();
     if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
     this._resetAppwellHooks();
-    if (!preserveDragHooks) this._disconnectDraggableHooks();
+    this._disconnectDraggableHooks();
+    if (this._iconsContainer) {
+      Main.uiGroup.remove_child(this._iconsContainer);
+      this._iconsContainer.destroy();
+      this._iconsContainer = null;
+    }
+    if (this._badgeManager) { this._badgeManager.destroy(); this._badgeManager = null; }
+    if (this._separator) { this._separator.destroy(); this._separator = null; }
+    if (this.dashContainer) this._restoreIcons();
+  }
+
+  _pauseForDrag() {
+    if (!this._iconsContainer) {
+      if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
+      return;
+    }
+    this._endAnimation();
+    if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
+    this._resetAppwellHooks();
     if (this._iconsContainer) {
       Main.uiGroup.remove_child(this._iconsContainer);
       this._iconsContainer.destroy();
@@ -153,21 +175,17 @@ export class Animator {
       return;
     }
     this.dash = this.dashContainer.dash;
-    if (this._relayout > 0 && this.extension && this.extension._updateLayout) {
-      this.extension._updateLayout();
-      this._relayout--;
-    }
     this._iconsContainer.width = 1; this._iconsContainer.height = 1;
 
     let animateIcons = this._iconsContainer.get_children().filter(c => c.name !== 'cupertinisator-badge');
-    if (this._iconsCount != animateIcons.length) {
+    if (this._iconsCount !== animateIcons.length) {
       this._relayout = 8;
       this._iconsCount = animateIcons.length;
     }
 
     let dock_position = 'bottom';
     let scaleFactor = St.ThemeContext.get_for_stage(global.stage).scale_factor;
-    let pivot = new Point(); pivot.x = 0.5; pivot.y = 1.0;
+    const pivot = this._pivot; pivot.x = 0.5; pivot.y = 1.0;
     let iconSize = (this.dash && this.dash.iconSize) ? this.dash.iconSize * (this.extension.scale || 1.0) : 48;
 
     switch (this.dashContainer._position) {
@@ -184,7 +202,7 @@ export class Animator {
       if (!bin) return;
       let found = false;
       for (let i = 0; i < animateIcons.length; i++) {
-        if (animateIcons[i]._bin == bin) { found = true; break; }
+        if (animateIcons[i]._bin === bin) { found = true; break; }
       }
       if (!found) {
         let uiIcon = new St.Widget({ name: 'icon', width: iconSize, height: iconSize, visible: true, opacity: 0 });
@@ -245,7 +263,7 @@ export class Animator {
 
     animateIcons.forEach((c) => {
       let orphan = true;
-      for (let i = 0; i < icons.length; i++) { if (icons[i]._bin == c._bin) { orphan = false; break; } }
+      for (let i = 0; i < icons.length; i++) { if (icons[i]._bin === c._bin) { orphan = false; break; } }
       if (orphan) {
         this._iconsContainer.remove_child(c);
       }
@@ -300,7 +318,7 @@ export class Animator {
       }
 
       if (icon._clickJump > 0) {
-        icon._clickJump -= 0.0275 * (this.extension.jump_speed || 1.0);
+        icon._clickJump -= 0.0275 * ANIM_JUMP_SPEED;
         if (icon._clickJump <= 0) {
           // Re-arm only when dock is visible and no hide is pending.
           // If hide was requested mid-loop, let this arc finish landing then stop —
@@ -316,7 +334,7 @@ export class Animator {
       }
 
       if (icon._introJump > 0) {
-        icon._introJump -= 0.03 * (this.extension.jump_speed || 1.0);
+        icon._introJump -= 0.03 * ANIM_JUMP_SPEED;
         if (icon._introJump <= 0) {
           icon._introJump = 0;
         }
@@ -331,7 +349,7 @@ export class Animator {
       }
 
       if (urgentBounceEnabled && icon._attentionJump > 0) {
-        icon._attentionJump -= 0.0275 * (this.extension.jump_speed || 1.0);
+        icon._attentionJump -= 0.0275 * ANIM_JUMP_SPEED;
         if (icon._attentionJump <= 0) {
           icon._attentionJump = 0;
           if (!isHidden) {
@@ -391,8 +409,7 @@ export class Animator {
       let opacity = 255;
 
       if (icon._clickJump > 0) {
-        let jh = this.extension.jump_height || 0.85;
-        let off = Math.sin(icon._clickJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * jh;
+        let off = Math.sin(icon._clickJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * ANIM_JUMP_HEIGHT;
         if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
       } else if (icon._introJump > 0) {
         let t = icon._introJump;
@@ -401,10 +418,10 @@ export class Animator {
         let fade_duration = ANIM_INTRO_FADE_DURATION;
         let off = 0;
         opacity = fade_duration > 0
-          ? Math.min(255, Math.round((p / fade_duration) * 255))
+          ? Math.min(255, Math.max(0, Math.round(Math.sin((Math.min(p, fade_duration) / fade_duration) * Math.PI / 2) * 255)))
           : 255;
         if (p <= scale_duration) {
-          scale = p / scale_duration;
+          scale = Math.sin((p / scale_duration) * Math.PI / 2);
           off = iconSize * ANIM_INTRO_HEIGHT * scaleFactor;
         } else {
           scale = 1.0;
@@ -413,8 +430,7 @@ export class Animator {
         }
         if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
       } else if (urgentBounceEnabled && icon._attentionJump > 0) {
-        let jh = this.extension.jump_height || 0.85;
-        let off = Math.sin(icon._attentionJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * jh;
+        let off = Math.sin(icon._attentionJump * Math.PI) * iconSize * ANIM_ICON_RAISE * scaleFactor * 1.65 * ANIM_JUMP_HEIGHT;
         if (dock_position === 'bottom') jY = -off; else if (dock_position === 'top') jY = off; else if (dock_position === 'left') jX = off; else if (dock_position === 'right') jX = -off;
       }
 
@@ -443,7 +459,7 @@ export class Animator {
   _get_position(obj) { return obj ? obj.get_transformed_position() : [0, 0]; }
 
   _beginAnimation() {
-    if (this._intervalId == null) {
+    if (this._intervalId === null) {
       this.animationInterval = ANIM_INTERVAL + (this.extension.animation_fps || 0) * ANIM_INTERVAL_PAD;
       this._intervalId = setInterval(this._animate.bind(this), this.animationInterval);
     }
@@ -511,7 +527,7 @@ export class Animator {
     draggable.connectObject(
       'drag-begin', () => {
         this._dragging = true;
-        this.disable(true);
+        this._pauseForDrag();
       },
       'drag-end', () => {
         this._dragging = false;
@@ -550,10 +566,10 @@ export class Animator {
     if (!container) return null;
     if (container._notificationBadgeBin) return container._notificationBadgeBin;
 
-    const children = typeof container.get_children === 'function' ? container.get_children() : [];
+    const children = container.get_children();
     const badgeBin = children.find(child => {
-      const grandChildren = typeof child.get_children === 'function' ? child.get_children() : [];
-      return grandChildren.some(c => typeof c.has_style_class_name === 'function' && c.has_style_class_name('notification-badge'));
+      const grandChildren = child.get_children();
+      return grandChildren.some(c => c.has_style_class_name('notification-badge'));
     }) ?? null;
 
     if (badgeBin) {
@@ -589,10 +605,10 @@ export class Animator {
 
   _findBadgeText(actor) {
     if (!actor) return '';
-    const text = typeof actor.get_text === 'function' ? actor.get_text() : '';
+    const text = actor.get_text ? actor.get_text() : '';
     if (text) return text;
 
-    const children = typeof actor.get_children === 'function' ? actor.get_children() : [];
+    const children = actor.get_children();
     for (const child of children) {
       const childText = this._findBadgeText(child);
       if (childText) return childText;
@@ -600,3 +616,4 @@ export class Animator {
     return '';
   }
 }
+

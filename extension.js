@@ -16,7 +16,6 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-/* exported init */
 
 import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
@@ -36,16 +35,6 @@ export default class DashAnimatorExtension extends Extension {
     this.animator = new Animator();
     this.animator.extension = this;
 
-    this.services = {
-      updateIcon: (icon) => {
-        if (icon && icon.icon_name && icon.icon_name.startsWith('user-trash')) {
-          if (icon._source && icon._source.first_child && icon.icon_name !== icon._source.first_child.icon_name) {
-            icon.icon_name = icon._source.first_child.icon_name;
-          }
-        }
-      },
-    };
-
     if (!this._findDashContainer()) {
       this._findDashIntervalId = setInterval(() => {
         if (this._findDashContainer()) {
@@ -56,7 +45,6 @@ export default class DashAnimatorExtension extends Extension {
     }
 
     global.display.connectObject(
-      'notify::focus-window', () => this._onFocusWindow(),
       'in-fullscreen-changed', () => this._onFullScreen(),
       this
     );
@@ -140,8 +128,6 @@ export default class DashAnimatorExtension extends Extension {
   }
 
   _applySettings() {
-    this.jump_height = this._settings.get_double('jump-height');
-    this.jump_speed = this._settings.get_double('jump-speed');
     this.urgent_bounce = this._settings.get_boolean('urgent-bounce');
   }
 
@@ -150,7 +136,7 @@ export default class DashAnimatorExtension extends Extension {
     if (actor.name === name) return actor;
     if (currentDepth >= maxDepth) return null;
 
-    const children = typeof actor.get_children === 'function' ? actor.get_children() : [];
+    const children = actor.get_children();
     for (let i = 0; i < children.length; i++) {
       const found = this._findChildByName(children[i], name, maxDepth, currentDepth + 1);
       if (found) return found;
@@ -259,7 +245,7 @@ export default class DashAnimatorExtension extends Extension {
     }
     this._iconsDirty = false;
 
-    const dashChildren = typeof this.dash._box.get_children === 'function' ? this.dash._box.get_children() : [];
+    const dashChildren = this.dash._box.get_children();
 
     // hook on showApps
     if (this.dash.showAppsButton && !this.dash.showAppsButton._dashAnimatorHooked) {
@@ -422,7 +408,7 @@ export default class DashAnimatorExtension extends Extension {
   }
 
   _getTrashActor() {
-    const children = typeof this.dash?._box?.get_children === 'function' ? this.dash._box.get_children() : [];
+    const children = this.dash?._box ? this.dash._box.get_children() : [];
     return children.find(actor => actor.child?._delegate?.app?.isTrash) ?? null;
   }
 
@@ -436,15 +422,7 @@ export default class DashAnimatorExtension extends Extension {
       this.animator._endAnimation();
   }
 
-  _onFocusWindow() {
-    if (this.animator?._onFocusWindow)
-      this.animator._onFocusWindow();
-  }
-
   _onFullScreen() {
-    if (this.animator?._onFullScreen)
-      this.animator._onFullScreen();
-
     // Force-hide dock in fullscreen — macOS dock never shows in fullscreen
     const isFullscreen = global.display.get_monitor_in_fullscreen(
       global.display.get_current_monitor()
@@ -506,8 +484,7 @@ export default class DashAnimatorExtension extends Extension {
     let scheme;
 
     if (aware) {
-      const desktopSettings = Gio.Settings.new('org.gnome.desktop.interface');
-      scheme = desktopSettings.get_string('color-scheme') === 'prefer-dark' ? 'dark' : 'light';
+      scheme = this._desktopSettings.get_string('color-scheme') === 'prefer-dark' ? 'dark' : 'light';
     } else {
       scheme = this._settings.get_string('dock-color-scheme');
     }
