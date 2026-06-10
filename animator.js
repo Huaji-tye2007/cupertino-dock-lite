@@ -51,11 +51,6 @@ export class Animator {
   }
 
   disable() {
-    if (!this._iconsContainer) {
-      if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
-      this._disconnectDraggableHooks();
-      return;
-    }
     this._endAnimation();
     if (this._oneShotId) { clearTimeout(this._oneShotId); this._oneShotId = null; }
     this._resetAppwellHooks();
@@ -536,6 +531,9 @@ export class Animator {
         }
         this._draggableHooks = this._draggableHooks.filter(d => d !== draggable);
         if (this.extension?.animator === this) {
+          if (this._oneShotId) {
+            clearTimeout(this._oneShotId);
+          }
           this._oneShotId = setTimeout(() => {
             this._oneShotId = null;
             if (this.extension?.animator !== this) return;
