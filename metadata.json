@@ -12,6 +12,10 @@
   "uuid": "cupertino-dock-lite@rinzler69-wastaken.github.com",
   "gettext-domain": "cupertino-dock-lite",
   "settings-schema": "org.gnome.shell.extensions.cupertino-dock-lite",
+  "session-modes": [
+    "user",
+    "unlock-dialog"
+  ],
   "version-name": "1.0.0",
   "donations": {
     "paypal": "ArtFazil",
