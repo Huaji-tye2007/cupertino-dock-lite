@@ -217,7 +217,10 @@ export class Animator {
           uiIcon._appwell.connectObject(
             'clicked',
             () => {
-              if (uiIcon._appwell.app && uiIcon._appwell.app.get_n_windows() === 0) {
+              // A click may activate an existing window on another workspace,
+              // so it should animate even when the app is already running.
+              if (uiIcon._appwell.app) {
+                uiIcon._introJump = 0;
                 uiIcon._clickJump = 1.0;
                 this._startAnimation();
                 if (this.dashContainer?._animateIn) this.dashContainer._animateIn(0.2, 0);
@@ -627,4 +630,3 @@ export class Animator {
     return '';
   }
 }
-
